@@ -1,16 +1,32 @@
+use std::num::NonZeroU64;
+
 use wgpu::{
-    util::DeviceExt, Adapter, Device, PresentMode, RenderPipeline, Surface, SurfaceConfiguration,
+    util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, PresentMode, Queue,
+    RenderPipeline, Surface, SurfaceConfiguration,
 };
 use winit::window::Window;
+
+use crate::input;
+
+const WIDTH: u32 = 1280;
+const HEIGHT: u32 = 720;
 
 pub struct RenderContext {
     pub(crate) surface: wgpu::Surface,
     pub(crate) device: wgpu::Device,
     pub(crate) adapter: wgpu::Adapter,
     pub(crate) queue: wgpu::Queue,
+
     pub(crate) surface_config: wgpu::SurfaceConfiguration,
     pub(crate) window_size: winit::dpi::PhysicalSize<u32>,
     pub(crate) window: Window,
+
+    pub(crate) compute_pipeline: wgpu::ComputePipeline,
+    pub(crate) readback_buffer: wgpu::Buffer,
+    pub(crate) storage_buffer: wgpu::Buffer,
+    pub(crate) compute_bind_group: wgpu::BindGroup,
+    pub(crate) pixels_len: usize,
+
     pub(crate) render_pipeline: wgpu::RenderPipeline,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
@@ -20,65 +36,39 @@ pub struct RenderContext {
 impl RenderContext {
     // Creating some of the wgpu types requires async code
     pub(crate) async fn new(window: Window) -> Self {
-        // Create surface
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            dx12_shader_compiler: Default::default(),
-        });
-        let surface = unsafe { instance.create_surface(&window) }.unwrap();
-
-        // Create adapter. device and queue
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                    label: None,
-                },
-                None, // Trace path
-            )
-            .await
-            .unwrap();
+        // Init wpgu
+        let (surface, adapter, device, queue) = init_wpgu(&window).await;
 
         // Configure surface
-        let size = window.inner_size();
         let surface_config =
             create_surface_config(&window, &surface, &adapter, PresentMode::AutoVsync);
         surface.configure(&device, &surface_config);
 
-        let render_pipeline = create_pipeline(&device, &surface_config);
+        // Create compute pipeline
+        // let mut pixels: Vec<u32> = vec![0; 512];
+        // let pixels = (0..512).collect::<Vec<u32>>();
+        let pixels = (0..32).collect::<Vec<u32>>();
+        // pixels[0] = 0;
+        // pixels[1] = 1;
+        // pixels[2] = 2;
+        // pixels[3] = 3;
+        // pixels[4] = 4;
+        // let pixels = pixels
+        //     .into_iter()
+        //     .flat_map(|b| b.to_ne_bytes())
+        //     .collect::<Vec<u8>>();
+        // let pixels = src_range.flat_map(u32::to_ne_bytes).collect::<Vec<_>>();
+        // let pixels: Vec<u32> = vec![0; (WIDTH * HEIGHT) as usize];
+        let (compute_pipeline, readback_buffer, storage_buffer, compute_bind_group) =
+            create_compute_pipeline(&device, &pixels);
+
+        // Create render pipeline
+        let render_pipeline = create_render_pipeline(&device, &surface_config);
 
         // Vertex and index buffer
-        #[rustfmt::skip]
-        const VERTICES: &[Vertex] = &[
-            Vertex { position: [-1.0, -1.0, 0.0] }, // bottom left
-            Vertex { position: [1.0,  -1.0, 0.0] }, // bottom right
-            Vertex { position: [-1.0, 1.0,  0.0] }, // top left
-            Vertex { position: [1.0,  1.0,  0.0] }, // top right
-        ];
-        const INDICES: &[u16] = &[0, 1, 2, 3, 2, 1];
+        let (vertex_buffer, index_buffer, num_indices) = create_vertex_index_buffers(&device);
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let num_indices = INDICES.len() as u32;
+        let window_size = window.inner_size();
 
         Self {
             window,
@@ -86,8 +76,16 @@ impl RenderContext {
             device,
             adapter,
             queue,
+
             surface_config,
-            window_size: size,
+            window_size,
+
+            compute_pipeline,
+            readback_buffer,
+            storage_buffer,
+            compute_bind_group,
+            pixels_len: pixels.len(),
+
             render_pipeline,
             vertex_buffer,
             index_buffer,
@@ -109,7 +107,58 @@ impl RenderContext {
         }
     }
 
+    fn execute_compute(&self) -> Vec<u32> {
+        // Execute compute pass
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("compute encoder"),
+            });
+
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("compute pass"),
+            });
+            cpass.set_bind_group(0, &self.compute_bind_group, &[]);
+            cpass.set_pipeline(&self.compute_pipeline);
+            cpass.dispatch_workgroups(self.pixels_len as u32, 1, 1);
+        }
+
+        // Copy data from storage buffer to readback buffer
+        let size = self.pixels_len * std::mem::size_of::<u32>();
+        encoder.copy_buffer_to_buffer(
+            &self.storage_buffer,
+            0,
+            &self.readback_buffer,
+            0,
+            size as wgpu::BufferAddress,
+        );
+
+        self.queue.submit(Some(encoder.finish()));
+
+        // Read/Map readback buffer
+        let buffer_slice = self.readback_buffer.slice(..);
+        buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::MaintainBase::Wait);
+
+        let data = buffer_slice.get_mapped_range();
+        let mut result_u8 = bytemuck::cast_slice(&data).to_vec();
+        let result_u32 = result_u8
+            .chunks_exact_mut(4)
+            .map(|b| u32::from_ne_bytes(b.try_into().unwrap()))
+            .collect::<Vec<u32>>();
+
+        // Need to unmap readback buffer
+        drop(data);
+        self.readback_buffer.unmap();
+
+        println!("RESULT {:?}", result_u32);
+        result_u32
+    }
+
     pub(crate) fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        self.execute_compute();
+
         // Render texture
         let output = self.surface.get_current_texture()?;
         let view = output
@@ -152,6 +201,37 @@ impl RenderContext {
     }
 }
 
+async fn init_wpgu(window: &Window) -> (Surface, Adapter, Device, Queue) {
+    // Create surface
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        dx12_shader_compiler: Default::default(),
+    });
+    let surface = unsafe { instance.create_surface(&window) }.unwrap();
+
+    // Create adapter. device and queue
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        })
+        .await
+        .unwrap();
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                features: wgpu::Features::empty(),
+                limits: wgpu::Limits::default(),
+                label: None,
+            },
+            None, // Trace path
+        )
+        .await
+        .unwrap();
+    (surface, adapter, device, queue)
+}
+
 fn create_surface_config(
     window: &Window,
     surface: &Surface,
@@ -179,28 +259,107 @@ fn create_surface_config(
     }
 }
 
-fn create_pipeline(device: &Device, surface_config: &SurfaceConfiguration) -> RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shader.wgsl").into()),
+fn create_compute_pipeline(
+    device: &Device,
+    input: &[u32],
+) -> (ComputePipeline, Buffer, Buffer, BindGroup) {
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("compute shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/compute_shader.wgsl").into()),
     });
 
-    let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("compute bind group layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            count: None,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+                // min_binding_size: Some(NonZeroU64::new(1).unwrap()),
+            },
+        }],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("compute pipeline layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("compute pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader_module,
+        entry_point: "cs_main",
+    });
+
+    let size = (input.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
+    let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback buffer"),
+        size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let contents = bytemuck::cast_slice(input);
+    let storage_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("storage buffer"),
+        contents,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+    });
+
+    println!("{:?}", input);
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("compute bind group"),
+        layout: &bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: storage_buffer.as_entire_binding(),
+        }],
+    });
+
+    (pipeline, readback_buffer, storage_buffer, bind_group)
+    // let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    //     label: Some("storage buffer"),
+    //     size: SIZE as wgpu::BufferAddress,
+    //     usage: wgpu::BufferUsages::STORAGE
+    //         | wgpu::BufferUsages::COPY_DST
+    //         | wgpu::BufferUsages::COPY_SRC,
+    //     mapped_at_creation: false,
+    // });
+}
+
+fn create_render_pipeline(
+    device: &Device,
+    surface_config: &SurfaceConfiguration,
+) -> RenderPipeline {
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Render Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/render_shader.wgsl").into()),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Pipeline Layout"),
         bind_group_layouts: &[],
         push_constant_ranges: &[],
     });
 
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
-        layout: Some(&render_pipeline_layout),
+        layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
-            module: &shader,
+            module: &shader_module,
             entry_point: "vs_main",
             buffers: &[Vertex::desc()],
         },
         fragment: Some(wgpu::FragmentState {
-            module: &shader,
+            module: &shader_module,
             entry_point: "fs_main",
             targets: &[Some(wgpu::ColorTargetState {
                 format: surface_config.format,
@@ -226,7 +385,34 @@ fn create_pipeline(device: &Device, surface_config: &SurfaceConfiguration) -> Re
         multiview: None,
     });
 
-    render_pipeline
+    pipeline
+}
+
+#[rustfmt::skip]
+const VERTICES: &[Vertex] = &[
+    Vertex { position: [-1.0, -1.8, 0.0] }, // bottom left
+    Vertex { position: [1.0,  -1.0, 0.0] }, // bottom right
+    Vertex { position: [-1.0, 1.0,  0.0] }, // top left
+    Vertex { position: [1.0,  1.0,  0.0] }, // top right
+];
+const INDICES: &[u16] = &[0, 1, 2, 3, 2, 1];
+
+fn create_vertex_index_buffers(device: &Device) -> (Buffer, Buffer, u32) {
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Vertex Buffer"),
+        contents: bytemuck::cast_slice(VERTICES),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Index Buffer"),
+        contents: bytemuck::cast_slice(INDICES),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    let num_indices = INDICES.len() as u32;
+
+    (vertex_buffer, index_buffer, num_indices)
 }
 
 /// Vertex representation
