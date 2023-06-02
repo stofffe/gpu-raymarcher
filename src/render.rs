@@ -1,12 +1,8 @@
-use std::num::NonZeroU64;
-
 use wgpu::{
     util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, PresentMode, Queue,
     RenderPipeline, Surface, SurfaceConfiguration,
 };
 use winit::window::Window;
-
-use crate::input;
 
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
@@ -33,6 +29,14 @@ pub struct RenderContext {
     pub(crate) num_indices: u32,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Globals {
+    width: u32,
+    height: u32,
+    test: f32,
+}
+
 impl RenderContext {
     // Creating some of the wgpu types requires async code
     pub(crate) async fn new(window: Window) -> Self {
@@ -44,23 +48,15 @@ impl RenderContext {
             create_surface_config(&window, &surface, &adapter, PresentMode::AutoVsync);
         surface.configure(&device, &surface_config);
 
-        // Create compute pipeline
-        // let mut pixels: Vec<u32> = vec![0; 512];
-        // let pixels = (0..512).collect::<Vec<u32>>();
+        // Temp
+        let globals = Globals {
+            width: WIDTH,
+            height: HEIGHT,
+            test: 20.0,
+        };
         let pixels = (0..32).collect::<Vec<u32>>();
-        // pixels[0] = 0;
-        // pixels[1] = 1;
-        // pixels[2] = 2;
-        // pixels[3] = 3;
-        // pixels[4] = 4;
-        // let pixels = pixels
-        //     .into_iter()
-        //     .flat_map(|b| b.to_ne_bytes())
-        //     .collect::<Vec<u8>>();
-        // let pixels = src_range.flat_map(u32::to_ne_bytes).collect::<Vec<_>>();
-        // let pixels: Vec<u32> = vec![0; (WIDTH * HEIGHT) as usize];
         let (compute_pipeline, readback_buffer, storage_buffer, compute_bind_group) =
-            create_compute_pipeline(&device, &pixels);
+            create_compute_pipeline(&device, &pixels, globals);
 
         // Create render pipeline
         let render_pipeline = create_render_pipeline(&device, &surface_config);
@@ -70,6 +66,7 @@ impl RenderContext {
 
         let window_size = window.inner_size();
 
+        let pixels_len = pixels.len();
         Self {
             window,
             surface,
@@ -84,7 +81,7 @@ impl RenderContext {
             readback_buffer,
             storage_buffer,
             compute_bind_group,
-            pixels_len: pixels.len(),
+            pixels_len,
 
             render_pipeline,
             vertex_buffer,
@@ -261,7 +258,8 @@ fn create_surface_config(
 
 fn create_compute_pipeline(
     device: &Device,
-    input: &[u32],
+    pixels: &[u32],
+    globals: Globals,
 ) -> (ComputePipeline, Buffer, Buffer, BindGroup) {
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("compute shader"),
@@ -270,17 +268,70 @@ fn create_compute_pipeline(
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("compute bind group layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            count: None,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-                // min_binding_size: Some(NonZeroU64::new(1).unwrap()),
+        entries: &[
+            // Pixel array
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                    // min_binding_size: Some(NonZeroU64::new(1).unwrap()),
+                },
+                count: None,
             },
-        }],
+            // Globals
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    min_binding_size: None,
+                    has_dynamic_offset: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    // TODO put in better place
+    let size = (pixels.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
+
+    let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback buffer"),
+        size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let storage_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("storage buffer"),
+        contents: bytemuck::cast_slice(pixels),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+    });
+
+    // println!("{:?}", input);
+    let global_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("global uniform buffer"),
+        contents: bytemuck::cast_slice(&[globals]),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("compute bind group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: storage_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: global_uniform_buffer.as_entire_binding(),
+            },
+        ],
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -296,43 +347,7 @@ fn create_compute_pipeline(
         entry_point: "cs_main",
     });
 
-    let size = (input.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
-    let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback buffer"),
-        size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let contents = bytemuck::cast_slice(input);
-    let storage_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("storage buffer"),
-        contents,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::COPY_SRC,
-    });
-
-    println!("{:?}", input);
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("compute bind group"),
-        layout: &bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: storage_buffer.as_entire_binding(),
-        }],
-    });
-
     (pipeline, readback_buffer, storage_buffer, bind_group)
-    // let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-    //     label: Some("storage buffer"),
-    //     size: SIZE as wgpu::BufferAddress,
-    //     usage: wgpu::BufferUsages::STORAGE
-    //         | wgpu::BufferUsages::COPY_DST
-    //         | wgpu::BufferUsages::COPY_SRC,
-    //     mapped_at_creation: false,
-    // });
 }
 
 fn create_render_pipeline(
