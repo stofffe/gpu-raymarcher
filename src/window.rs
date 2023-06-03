@@ -1,5 +1,4 @@
 use winit::{
-    dpi::PhysicalSize,
     event::{DeviceEvent, ElementState, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,

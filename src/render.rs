@@ -1,6 +1,6 @@
 use wgpu::{
-    util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, PresentMode, Queue,
-    RenderPipeline, Surface, SurfaceConfiguration,
+    util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, Extent3d, PresentMode,
+    Queue, RenderPipeline, Surface, SurfaceConfiguration, TextureView,
 };
 use winit::window::Window;
 
@@ -22,11 +22,13 @@ pub struct RenderContext {
     pub(crate) storage_buffer: wgpu::Buffer,
     pub(crate) compute_bind_group: wgpu::BindGroup,
     pub(crate) pixels_len: usize,
+    pub(crate) texture_view: TextureView,
 
     pub(crate) render_pipeline: wgpu::RenderPipeline,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) num_indices: u32,
+    pub(crate) texture_bind_group: BindGroup,
 }
 
 #[repr(C)]
@@ -55,11 +57,29 @@ impl RenderContext {
             test: 20.0,
         };
         let pixels = (0..32).collect::<Vec<u32>>();
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("texture desc"),
+            size: Extent3d {
+                width: WIDTH,
+                height: HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (compute_pipeline, readback_buffer, storage_buffer, compute_bind_group) =
-            create_compute_pipeline(&device, &pixels, globals);
+            create_compute_pipeline(&device, &pixels, globals, &texture_view);
 
         // Create render pipeline
-        let render_pipeline = create_render_pipeline(&device, &surface_config);
+        let (render_pipeline, texture_bind_group) =
+            create_render_pipeline(&device, &surface_config, &texture_view);
 
         // Vertex and index buffer
         let (vertex_buffer, index_buffer, num_indices) = create_vertex_index_buffers(&device);
@@ -82,11 +102,13 @@ impl RenderContext {
             storage_buffer,
             compute_bind_group,
             pixels_len,
+            texture_view,
 
             render_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices,
+            texture_bind_group,
         }
     }
 
@@ -185,7 +207,7 @@ impl RenderContext {
                 depth_stencil_attachment: None,
             });
             render_pass.set_pipeline(&self.render_pipeline);
-            // render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
@@ -260,6 +282,7 @@ fn create_compute_pipeline(
     device: &Device,
     pixels: &[u32],
     globals: Globals,
+    texture_view: &TextureView,
 ) -> (ComputePipeline, Buffer, Buffer, BindGroup) {
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("compute shader"),
@@ -292,11 +315,23 @@ fn create_compute_pipeline(
                 },
                 count: None,
             },
+            // Texture
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::Rgba8Unorm, // TODO SRGB?
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
         ],
     });
     // TODO put in better place
     let size = (pixels.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
 
+    // Pixel buffer
     let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback buffer"),
         size,
@@ -312,13 +347,14 @@ fn create_compute_pipeline(
             | wgpu::BufferUsages::COPY_SRC,
     });
 
-    // println!("{:?}", input);
+    // Globals uniform
     let global_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("global uniform buffer"),
         contents: bytemuck::cast_slice(&[globals]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
+    // Bind group
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("compute bind group"),
         layout: &bind_group_layout,
@@ -330,6 +366,10 @@ fn create_compute_pipeline(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: global_uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(texture_view),
             },
         ],
     });
@@ -353,16 +393,64 @@ fn create_compute_pipeline(
 fn create_render_pipeline(
     device: &Device,
     surface_config: &SurfaceConfiguration,
-) -> RenderPipeline {
-    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Render Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/render_shader.wgsl").into()),
+    texture_view: &TextureView,
+) -> (RenderPipeline, BindGroup) {
+    let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    let texture_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("render bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+    let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &texture_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+            },
+        ],
+        label: Some("diffuse bind group"),
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[],
+        bind_group_layouts: &[&texture_bind_group_layout],
         push_constant_ranges: &[],
+    });
+
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Render Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/render_shader.wgsl").into()),
     });
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -400,15 +488,44 @@ fn create_render_pipeline(
         multiview: None,
     });
 
-    pipeline
+    (pipeline, texture_bind_group)
+}
+
+/// Vertex representation
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    uv: [f32; 2],
+}
+
+impl Vertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
+        }
+    }
 }
 
 #[rustfmt::skip]
 const VERTICES: &[Vertex] = &[
-    Vertex { position: [-1.0, -1.8, 0.0] }, // bottom left
-    Vertex { position: [1.0,  -1.0, 0.0] }, // bottom right
-    Vertex { position: [-1.0, 1.0,  0.0] }, // top left
-    Vertex { position: [1.0,  1.0,  0.0] }, // top right
+    Vertex { position: [-1.0, -1.0, 0.0], uv: [0.0, 1.0]}, // bottom left 
+    Vertex { position: [1.0,  -1.0, 0.0], uv: [1.0, 1.0]}, // bottom right
+    Vertex { position: [-1.0, 1.0,  0.0], uv: [0.0, 0.0]}, // top left
+    Vertex { position: [1.0,  1.0,  0.0], uv: [1.0, 0.0]}, // top right
 ];
 const INDICES: &[u16] = &[0, 1, 2, 3, 2, 1];
 
@@ -430,23 +547,23 @@ fn create_vertex_index_buffers(device: &Device) -> (Buffer, Buffer, u32) {
     (vertex_buffer, index_buffer, num_indices)
 }
 
-/// Vertex representation
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-}
-
-impl Vertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float32x3,
-            }],
-        }
-    }
-}
+// /// Vertex representation
+// #[repr(C)]
+// #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+// struct Vertex {
+//     position: [f32; 3],
+// }
+//
+// impl Vertex {
+//     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+//         wgpu::VertexBufferLayout {
+//             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+//             step_mode: wgpu::VertexStepMode::Vertex,
+//             attributes: &[wgpu::VertexAttribute {
+//                 offset: 0,
+//                 shader_location: 0,
+//                 format: wgpu::VertexFormat::Float32x3,
+//             }],
+//         }
+//     }
+// }
