@@ -1,4 +1,5 @@
 use winit::{
+    dpi::PhysicalSize,
     event::{DeviceEvent, ElementState, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
@@ -7,13 +8,14 @@ use winit::{
 use crate::{
     app::{App, Callbacks},
     context::Context,
+    render::{HEIGHT, WIDTH},
 };
 
 pub(crate) fn new_window() -> (winit::window::Window, winit::event_loop::EventLoop<()>) {
     let event_loop = EventLoop::new();
 
     let window = WindowBuilder::new()
-        // .with_inner_size(PhysicalSize::new(1280.0, 720.0))
+        .with_inner_size(PhysicalSize::new(WIDTH, HEIGHT))
         .build(&event_loop)
         .unwrap();
 

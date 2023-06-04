@@ -12,3 +12,5 @@ log = "0.4"
 wgpu = "0.15"
 pollster = "0.2"
 bytemuck = { version = "1.13.1", features = ["derive"] }
+encase = { version = "0.6.1", features = ["glam", "mint"] }
+glam = "0.24.0"

@@ -1,13 +1,11 @@
-use encase::{ShaderType, UniformBuffer};
-use glam::{uvec2, vec2, vec3, Mat3, UVec2, Vec2, Vec3, Vec4};
 use wgpu::{
     util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, Extent3d, PresentMode,
     Queue, RenderPipeline, Surface, SurfaceConfiguration, TextureView,
 };
 use winit::window::Window;
 
-pub const WIDTH: u32 = 1280;
-pub const HEIGHT: u32 = 720;
+const WIDTH: u32 = 1280;
+const HEIGHT: u32 = 720;
 
 pub struct RenderContext {
     pub(crate) surface: wgpu::Surface,
@@ -19,11 +17,11 @@ pub struct RenderContext {
     pub(crate) window_size: winit::dpi::PhysicalSize<u32>,
     pub(crate) window: Window,
 
-    // pub(crate) pixels_len: usize,
     pub(crate) compute_pipeline: wgpu::ComputePipeline,
+    pub(crate) readback_buffer: wgpu::Buffer,
+    pub(crate) storage_buffer: wgpu::Buffer,
     pub(crate) compute_bind_group: wgpu::BindGroup,
-    // These two are a part of the bind group
-    pub(crate) input_buffer: wgpu::Buffer,
+    pub(crate) pixels_len: usize,
     pub(crate) texture_view: TextureView,
 
     pub(crate) render_pipeline: wgpu::RenderPipeline,
@@ -33,24 +31,12 @@ pub struct RenderContext {
     pub(crate) texture_bind_group: BindGroup,
 }
 
-// ShaderType auto pads!
-// Try to minimize size
-#[derive(Debug, Clone, ShaderType)]
-struct Globals {
-    screen_dim: UVec2,
-    max_steps: u32,
-    max_dist: f32,
-    camera_pos: Vec3,
-    surface_dist: f32,
-    light_pos: Vec3,
-    focal_length: f32,
-}
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Sphere {
-    pos: [f32; 3],
-    radius: f32,
+struct Globals {
+    width: u32,
+    height: u32,
+    test: f32,
 }
 
 impl RenderContext {
@@ -64,22 +50,13 @@ impl RenderContext {
             create_surface_config(&window, &surface, &adapter, PresentMode::AutoVsync);
         surface.configure(&device, &surface_config);
 
-        // Input data
+        // Temp
         let globals = Globals {
-            camera_pos: vec3(0.0, 0.0, -5.0),
-            light_pos: vec3(-2.0, 2.0, -2.0),
-            screen_dim: uvec2(WIDTH, HEIGHT),
-            max_dist: 10.0,
-            surface_dist: 0.001,
-            max_steps: 50,
-            focal_length: 1.0,
+            width: WIDTH,
+            height: HEIGHT,
+            test: 20.0,
         };
-        dbg!(Globals::min_size());
-
-        let spheres = vec![Sphere {
-            pos: vec3(1.0, 3.0, 0.0).into(),
-            radius: 1.0,
-        }];
+        let pixels = (0..WIDTH).collect::<Vec<u32>>();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("texture desc"),
             size: Extent3d {
@@ -97,10 +74,8 @@ impl RenderContext {
             view_formats: &[],
         });
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Create compute pipeline
-        let (compute_pipeline, storage_buffer, compute_bind_group) =
-            create_compute_pipeline(&device, &spheres, globals, &texture_view);
+        let (compute_pipeline, readback_buffer, storage_buffer, compute_bind_group) =
+            create_compute_pipeline(&device, &pixels, globals, &texture_view);
 
         // Create render pipeline
         let (render_pipeline, texture_bind_group) =
@@ -111,6 +86,7 @@ impl RenderContext {
 
         let window_size = window.inner_size();
 
+        let pixels_len = pixels.len();
         Self {
             window,
             surface,
@@ -122,8 +98,10 @@ impl RenderContext {
             window_size,
 
             compute_pipeline,
-            input_buffer: storage_buffer,
+            readback_buffer,
+            storage_buffer,
             compute_bind_group,
+            pixels_len,
             texture_view,
 
             render_pipeline,
@@ -148,7 +126,7 @@ impl RenderContext {
         }
     }
 
-    fn execute_compute(&self) {
+    fn execute_compute(&self) -> Vec<u32> {
         // Execute compute pass
         let mut encoder = self
             .device
@@ -162,14 +140,42 @@ impl RenderContext {
             });
             cpass.set_bind_group(0, &self.compute_bind_group, &[]);
             cpass.set_pipeline(&self.compute_pipeline);
-            cpass.dispatch_workgroups(WIDTH, HEIGHT, 1);
+            cpass.dispatch_workgroups(self.pixels_len as u32, 1, 1);
         }
 
+        // Copy data from storage buffer to readback buffer
+        let size = self.pixels_len * std::mem::size_of::<u32>();
+        encoder.copy_buffer_to_buffer(
+            &self.storage_buffer,
+            0,
+            &self.readback_buffer,
+            0,
+            size as wgpu::BufferAddress,
+        );
+
         self.queue.submit(Some(encoder.finish()));
+
+        // Read/Map readback buffer
+        let buffer_slice = self.readback_buffer.slice(..);
+        buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::MaintainBase::Wait);
+
+        let data = buffer_slice.get_mapped_range();
+        let mut result_u8 = bytemuck::cast_slice(&data).to_vec();
+        let result_u32 = result_u8
+            .chunks_exact_mut(4)
+            .map(|b| u32::from_ne_bytes(b.try_into().unwrap()))
+            .collect::<Vec<u32>>();
+
+        // Need to unmap readback buffer
+        drop(data);
+        self.readback_buffer.unmap();
+
+        println!("RESULT {:?}", result_u32);
+        result_u32
     }
 
     pub(crate) fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        // Execute raymarching compute shader
         self.execute_compute();
 
         // Render texture
@@ -180,16 +186,21 @@ impl RenderContext {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("render encoder"),
+                label: Some("Render Encoder"),
             });
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("render pass"),
+                label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
                         store: true,
                     },
                 })],
@@ -269,10 +280,10 @@ fn create_surface_config(
 
 fn create_compute_pipeline(
     device: &Device,
-    pixels: &[Sphere],
+    pixels: &[u32],
     globals: Globals,
     texture_view: &TextureView,
-) -> (ComputePipeline, Buffer, BindGroup) {
+) -> (ComputePipeline, Buffer, Buffer, BindGroup) {
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("compute shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/compute_shader.wgsl").into()),
@@ -318,10 +329,17 @@ fn create_compute_pipeline(
         ],
     });
     // TODO put in better place
-    // let size = (pixels.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
+    let size = (pixels.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
 
-    // Input buffer
-    let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    // Pixel buffer
+    let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback buffer"),
+        size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let storage_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("storage buffer"),
         contents: bytemuck::cast_slice(pixels),
         usage: wgpu::BufferUsages::STORAGE
@@ -329,15 +347,10 @@ fn create_compute_pipeline(
             | wgpu::BufferUsages::COPY_SRC,
     });
 
-    let mut buffer = UniformBuffer::new(Vec::new());
-    buffer.write(&globals).unwrap();
-    let byte_buffer = buffer.into_inner();
-
     // Globals uniform
     let global_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("global uniform buffer"),
-        contents: &byte_buffer,
-        // contents: bytemuck::cast_slice(&[globals]),
+        contents: bytemuck::cast_slice(&[globals]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
@@ -348,7 +361,7 @@ fn create_compute_pipeline(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: input_buffer.as_entire_binding(),
+                resource: storage_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -374,7 +387,7 @@ fn create_compute_pipeline(
         entry_point: "cs_main",
     });
 
-    (pipeline, input_buffer, bind_group)
+    (pipeline, readback_buffer, storage_buffer, bind_group)
 }
 
 fn create_render_pipeline(

@@ -5,7 +5,8 @@ struct App {}
 impl Callbacks for App {
     fn init(&self, ctx: &mut Context) {}
 
-    fn update(&mut self, _ctx: &mut Context, _dt: f32) -> bool {
+    fn update(&mut self, _ctx: &mut Context, dt: f32) -> bool {
+        println!("{dt}");
         false
     }
 }
