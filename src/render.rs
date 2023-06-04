@@ -1,4 +1,4 @@
-use encase::{ShaderType, UniformBuffer};
+use encase::{ShaderType, StorageBuffer, UniformBuffer};
 use glam::{uvec2, vec2, vec3, Mat3, UVec2, Vec2, Vec3, Vec4};
 use wgpu::{
     util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, Extent3d, PresentMode,
@@ -46,10 +46,16 @@ struct Globals {
     focal_length: f32,
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+// #[repr(C)]
+// #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+// struct Sphere {
+//     pos: [f32; 3],
+//     radius: f32,
+// }
+
+#[derive(ShaderType)]
 struct Sphere {
-    pos: [f32; 3],
+    pos: Vec3,
     radius: f32,
 }
 
@@ -76,10 +82,17 @@ impl RenderContext {
         };
         dbg!(Globals::min_size());
 
-        let spheres = vec![Sphere {
-            pos: vec3(1.0, 3.0, 0.0).into(),
-            radius: 1.0,
-        }];
+        let spheres = vec![
+            Sphere {
+                pos: vec3(1.0, 3.0, 0.0),
+                radius: 1.0,
+            },
+            Sphere {
+                pos: vec3(-1.0, 2.0, 2.0),
+                radius: 1.0,
+            },
+        ];
+
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("texture desc"),
             size: Extent3d {
@@ -269,7 +282,7 @@ fn create_surface_config(
 
 fn create_compute_pipeline(
     device: &Device,
-    pixels: &[Sphere],
+    spheres: &[Sphere],
     globals: Globals,
     texture_view: &TextureView,
 ) -> (ComputePipeline, Buffer, BindGroup) {
@@ -281,12 +294,12 @@ fn create_compute_pipeline(
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("compute bind group layout"),
         entries: &[
-            // Pixel array
+            // Input array
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    ty: wgpu::BufferBindingType::Storage { read_only: true }, // read only
                     has_dynamic_offset: false,
                     min_binding_size: None,
                     // min_binding_size: Some(NonZeroU64::new(1).unwrap()),
@@ -317,28 +330,31 @@ fn create_compute_pipeline(
             },
         ],
     });
-    // TODO put in better place
-    // let size = (pixels.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
 
-    // Input buffer
+    // Sphere buffer
+    let mut byte_buffer = Vec::new();
+    let mut buffer = StorageBuffer::new(&mut byte_buffer);
+    buffer.write(&spheres).unwrap();
+
     let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("storage buffer"),
-        contents: bytemuck::cast_slice(pixels),
+        contents: &byte_buffer,
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC,
+        // contents: bytemuck::cast_slice(spheres),
     });
 
+    // Globals unfiform
     let mut buffer = UniformBuffer::new(Vec::new());
     buffer.write(&globals).unwrap();
     let byte_buffer = buffer.into_inner();
 
-    // Globals uniform
     let global_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("global uniform buffer"),
         contents: &byte_buffer,
-        // contents: bytemuck::cast_slice(&[globals]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        // contents: bytemuck::cast_slice(&[globals]),
     });
 
     // Bind group
