@@ -38,10 +38,7 @@ pub struct RenderContext {
 #[derive(Debug, Clone, ShaderType)]
 struct Globals {
     screen_dim: UVec2,
-    max_steps: u32,
-    max_dist: f32,
     camera_pos: Vec3,
-    surface_dist: f32,
     light_pos: Vec3,
     focal_length: f32,
 }
@@ -72,24 +69,29 @@ impl RenderContext {
 
         // Input data
         let globals = Globals {
-            camera_pos: vec3(0.0, 0.0, -5.0),
-            light_pos: vec3(-2.0, 2.0, -2.0),
+            camera_pos: vec3(0.0, 0.0, -3.0),
+            light_pos: vec3(-2.0, 2.0, -4.0),
             screen_dim: uvec2(WIDTH, HEIGHT),
-            max_dist: 10.0,
-            surface_dist: 0.001,
-            max_steps: 50,
             focal_length: 1.0,
         };
         dbg!(Globals::min_size());
 
         let spheres = vec![
             Sphere {
-                pos: vec3(1.0, 3.0, 0.0),
+                pos: vec3(1.0, 1.0, 0.0),
                 radius: 1.0,
             },
             Sphere {
-                pos: vec3(-1.0, 2.0, 2.0),
+                pos: vec3(3.0, 1.0, 0.0),
                 radius: 1.0,
+            },
+            Sphere {
+                pos: vec3(-1.0, 0.5, 2.0),
+                radius: 1.0,
+            },
+            Sphere {
+                pos: vec3(-0.0, -0.0, 0.0),
+                radius: 0.2,
             },
         ];
 
