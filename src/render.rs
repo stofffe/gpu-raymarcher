@@ -1,5 +1,5 @@
 use encase::{ShaderType, StorageBuffer, UniformBuffer};
-use glam::{uvec2, vec2, vec3, Mat3, UVec2, Vec2, Vec3, Vec4};
+use glam::{uvec2, vec2, vec3, Mat3, Mat4, Quat, UVec2, Vec2, Vec3, Vec4};
 use wgpu::{
     util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, Extent3d, PresentMode,
     Queue, RenderPipeline, Surface, SurfaceConfiguration, TextureView,

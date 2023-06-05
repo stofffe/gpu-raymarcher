@@ -198,7 +198,7 @@ fn map(pos: vec3<f32>) -> f32 {
     let plane = plane_sdf(pos, vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0));
     min_dist = min(min_dist, plane);
 
-    let plane2 = plane_sdf(pos, vec3(1.0, 0.0, 0.0), vec3<f32>(-3.0, 0, 0.0, 0.0));
+    let plane2 = plane_sdf(pos, vec3(1.0, 0.0, 0.0), vec3<f32>(-3.0, 0.0, 0.0));
     min_dist = min(min_dist, plane2);
 
     return min_dist;
