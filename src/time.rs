@@ -1,27 +1,35 @@
 use std::time;
 
 pub struct TimeContext {
-    pub current_time: time::SystemTime,
+    pub(crate) start_time: time::SystemTime,
+    pub(crate) current_time: time::SystemTime,
 }
 
 impl Default for TimeContext {
     fn default() -> Self {
-        let current_time = std::time::SystemTime::now();
-        Self { current_time }
+        let start_time = std::time::SystemTime::now();
+        Self {
+            start_time,
+            current_time: start_time,
+        }
     }
 }
 
 impl TimeContext {
-    pub fn update_time(&mut self) -> f32 {
+    pub(crate) fn update_time(&mut self) -> f32 {
         let new_time = std::time::SystemTime::now();
-        let time_since = self.time_since(new_time);
+        let dt = new_time
+            .duration_since(self.current_time)
+            .unwrap()
+            .as_secs_f32();
         self.current_time = new_time;
-        time_since
+        dt
     }
 
-    fn time_since(&self, new_time: std::time::SystemTime) -> f32 {
+    pub(crate) fn time_since_start(&self) -> f32 {
+        let new_time = std::time::SystemTime::now();
         new_time
-            .duration_since(self.current_time)
+            .duration_since(self.start_time)
             .unwrap()
             .as_secs_f32()
     }

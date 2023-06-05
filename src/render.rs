@@ -1,10 +1,12 @@
 use encase::{ShaderType, StorageBuffer, UniformBuffer};
-use glam::{uvec2, vec2, vec3, Mat3, Mat4, Quat, UVec2, Vec2, Vec3, Vec4};
+use glam::{uvec2, vec3, UVec2, Vec3};
 use wgpu::{
     util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, Extent3d, PresentMode,
     Queue, RenderPipeline, Surface, SurfaceConfiguration, TextureView,
 };
 use winit::window::Window;
+
+use crate::time::TimeContext;
 
 pub const WIDTH: u32 = 1280;
 pub const HEIGHT: u32 = 720;
@@ -24,23 +26,27 @@ pub struct RenderContext {
     pub(crate) compute_bind_group: wgpu::BindGroup,
     // These two are a part of the bind group
     pub(crate) input_buffer: wgpu::Buffer,
-    pub(crate) texture_view: TextureView,
+    pub(crate) global_uniform_buffer: wgpu::Buffer,
+    pub(crate) texture_view: wgpu::TextureView,
 
     pub(crate) render_pipeline: wgpu::RenderPipeline,
     pub(crate) vertex_buffer: wgpu::Buffer,
     pub(crate) index_buffer: wgpu::Buffer,
     pub(crate) num_indices: u32,
-    pub(crate) texture_bind_group: BindGroup,
+    pub(crate) texture_bind_group: wgpu::BindGroup,
+
+    pub(crate) globals: Globals,
 }
 
 // ShaderType auto pads!
 // Try to minimize size
 #[derive(Debug, Clone, ShaderType)]
-struct Globals {
+pub(crate) struct Globals {
     screen_dim: UVec2,
     camera_pos: Vec3,
     light_pos: Vec3,
     focal_length: f32,
+    time: f32,
 }
 
 // #[repr(C)]
@@ -73,6 +79,7 @@ impl RenderContext {
             light_pos: vec3(-2.0, 2.0, -4.0),
             screen_dim: uvec2(WIDTH, HEIGHT),
             focal_length: 1.0,
+            time: 2.0,
         };
         dbg!(Globals::min_size());
 
@@ -114,8 +121,8 @@ impl RenderContext {
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create compute pipeline
-        let (compute_pipeline, storage_buffer, compute_bind_group) =
-            create_compute_pipeline(&device, &spheres, globals, &texture_view);
+        let (compute_pipeline, input_buffer, global_uniform_buffer, compute_bind_group) =
+            create_compute_pipeline(&device, &spheres, &globals, &texture_view);
 
         // Create render pipeline
         let (render_pipeline, texture_bind_group) =
@@ -137,7 +144,8 @@ impl RenderContext {
             window_size,
 
             compute_pipeline,
-            input_buffer: storage_buffer,
+            input_buffer,
+            global_uniform_buffer,
             compute_bind_group,
             texture_view,
 
@@ -146,7 +154,18 @@ impl RenderContext {
             index_buffer,
             num_indices,
             texture_bind_group,
+
+            globals,
         }
+    }
+
+    fn update_global_uniforms(&mut self, time_ctx: &TimeContext) {
+        self.globals.time = time_ctx.time_since_start();
+        let mut buffer = UniformBuffer::new(Vec::new());
+        buffer.write(&self.globals).unwrap();
+        let byte_buffer = buffer.into_inner();
+        self.queue
+            .write_buffer(&self.global_uniform_buffer, 0, &byte_buffer);
     }
 
     pub(crate) fn reconfigure_present_mode(&mut self, present_mode: PresentMode) {
@@ -163,7 +182,7 @@ impl RenderContext {
         }
     }
 
-    fn execute_compute(&self) {
+    fn execute_compute(&mut self) {
         // Execute compute pass
         let mut encoder = self
             .device
@@ -183,8 +202,9 @@ impl RenderContext {
         self.queue.submit(Some(encoder.finish()));
     }
 
-    pub(crate) fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    pub(crate) fn render(&mut self, time_ctx: &TimeContext) -> Result<(), wgpu::SurfaceError> {
         // Execute raymarching compute shader
+        self.update_global_uniforms(time_ctx);
         self.execute_compute();
 
         // Render texture
@@ -285,9 +305,9 @@ fn create_surface_config(
 fn create_compute_pipeline(
     device: &Device,
     spheres: &[Sphere],
-    globals: Globals,
+    globals: &Globals,
     texture_view: &TextureView,
-) -> (ComputePipeline, Buffer, BindGroup) {
+) -> (ComputePipeline, Buffer, Buffer, BindGroup) {
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("compute shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/compute_shader.wgsl").into()),
@@ -392,7 +412,7 @@ fn create_compute_pipeline(
         entry_point: "cs_main",
     });
 
-    (pipeline, input_buffer, bind_group)
+    (pipeline, input_buffer, global_uniform_buffer, bind_group)
 }
 
 fn create_render_pipeline(

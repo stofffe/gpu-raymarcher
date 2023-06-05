@@ -70,7 +70,7 @@ pub(crate) async fn run_window<C: Callbacks + 'static>(
             _ => {}
         },
         Event::RedrawRequested(window_id) if window_id == ctx.render.window.id() => {
-            match ctx.render.render() {
+            match ctx.render.render(&ctx.time) {
                 Ok(_) => {}
                 Err(wgpu::SurfaceError::Lost) => ctx.render.resize_window(ctx.render.window_size),
                 Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,

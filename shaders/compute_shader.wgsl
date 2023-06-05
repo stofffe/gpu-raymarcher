@@ -19,6 +19,7 @@ struct Globals {
     camera_pos: vec3<f32>,
     light_pos: vec3<f32>,
     focal_length: f32,
+    time: f32,
 };
 
 const max_steps: u32 = 100u;
@@ -47,7 +48,7 @@ fn cs_main(@builtin(global_invocation_id) coord: vec3<u32>) {
         (1.0 - f32(coord.y) / f32(g.screen_dim.y)) * 2.0 - 1.0
     );
 
-    let ro = g.camera_pos;
+    let ro = g.camera_pos + vec3<f32>(g.time, 0.0, 0.0);
     let rd = normalize(vec3<f32>(uv.xy, g.focal_length));
     let color = raymarch_color(ro, rd);
 
