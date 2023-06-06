@@ -1,6 +1,6 @@
-use glam::{quat, vec3, Mat3, Mat4, Quat, Vec3};
+use glam::{vec3, Mat3, Vec3};
 use gpu_raymarcher::{
-    cmd::{keyboard, mouse, render, time, window},
+    cmd::{keyboard, mouse, render, window},
     Callbacks, Context, KeyCode, KeyModifier,
 };
 
@@ -13,16 +13,28 @@ struct App {
     yaw: f32,
     pitch: f32,
     focal_len: f32,
+    pause: bool,
+    tot_dt: f32,
+    frames: u32,
 }
 
 impl Callbacks for App {
     fn init(&self, ctx: &mut Context) {
         window::set_cursor_enabled(ctx, false);
+        window::set_vsync(ctx, false);
     }
 
     fn update(&mut self, ctx: &mut Context, dt: f32) -> bool {
         self.input(ctx, dt);
         self.draw();
+
+        self.tot_dt += dt;
+        self.frames += 1;
+        if self.frames % 50 == 0 {
+            let avg = self.tot_dt / self.frames as f32;
+            let fps = 1.0 / avg;
+            println!("avg ms: {avg}, avg fps: {fps}");
+        }
 
         // println!("{dt}");
         false
@@ -31,9 +43,13 @@ impl Callbacks for App {
 
 impl App {
     fn input(&mut self, ctx: &mut Context, dt: f32) {
-        let mut move_speed = CAMERA_MOVE_SPEED;
-        if keyboard::modifier_pressed(ctx, KeyModifier::Shift) {
-            move_speed *= 3.0;
+        // Pausing
+        if keyboard::key_just_pressed(ctx, KeyCode::Escape) {
+            self.pause = !self.pause;
+            window::set_cursor_enabled(ctx, self.pause);
+        }
+        if self.pause {
+            return;
         }
 
         // Camera rotation
@@ -51,6 +67,11 @@ impl App {
             * Mat3::from_rotation_x(self.pitch.to_radians());
 
         // Camera movement
+        let mut move_speed = CAMERA_MOVE_SPEED;
+        if keyboard::modifier_pressed(ctx, KeyModifier::Shift) {
+            move_speed *= 3.0;
+        }
+
         let rot_mat = rotation.to_cols_array_2d();
         let right = vec3(rot_mat[0][0], rot_mat[0][1], rot_mat[0][2]).normalize();
         let up = vec3(rot_mat[1][0], rot_mat[1][1], rot_mat[1][2]).normalize();
@@ -92,6 +113,9 @@ fn main() {
         yaw: 0.0,
         pitch: 0.0,
         focal_len: 1.0,
+        pause: false,
+        tot_dt: 0.0,
+        frames: 0,
     };
     gpu_raymarcher::run(app);
 }

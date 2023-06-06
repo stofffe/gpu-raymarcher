@@ -23,19 +23,18 @@ pub fn mouse_pos_pixel(ctx: &Context) -> (u32, u32) {
     ctx.input.mouse.mouse_pos_pixel(&ctx.render)
 }
 
-/// Returns true if Button is down
+/// Returns true if MouseButton is pressed
 /// Accepts repeating
 pub fn mouse_button_pressed(ctx: &Context, keycode: MouseButton) -> bool {
     ctx.input.mouse.button_pressed(keycode)
 }
 
-/// Returns true if Button was pressed this frame
-/// Does not accepts repeating
+/// Returns true if MouseButton was pressed this frame
 pub fn mouse_button_just_pressed(ctx: &Context, keycode: MouseButton) -> bool {
     ctx.input.mouse.button_just_pressed(keycode)
 }
 
-/// Returns true is MouseButton was released this frame
+/// Returns true if MouseButton was released this frame
 pub fn mouse_button_released(ctx: &Context, keycode: MouseButton) -> bool {
     ctx.input.mouse.button_released(keycode)
 }

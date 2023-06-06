@@ -5,6 +5,7 @@ use winit::{
     window::{CursorGrabMode, Fullscreen},
 };
 
+/// Enables/Disables vsync
 pub fn set_vsync(ctx: &mut Context, vsync: bool) {
     let present_mode = if vsync {
         PresentMode::AutoVsync

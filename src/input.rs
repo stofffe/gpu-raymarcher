@@ -200,7 +200,7 @@ impl KeyboardContext {
         self.previous_pressed = self.pressed.clone();
     }
 
-    pub(crate) fn save_key_modifiers(&mut self) {
+    pub(crate) fn save_modifiers(&mut self) {
         self.previous_pressed_modifiers = self.pressed_modifiers.clone();
     }
 }
@@ -271,7 +271,7 @@ mod tests {
         assert!(kc.modifier_pressed(KeyModifier::Shift));
         assert!(!kc.modifier_pressed(KeyModifier::Ctrl));
 
-        kc.save_key_modifiers();
+        kc.save_modifiers();
 
         // Press Shift and Ctrl
         kc.modifiers_changed(ModifiersState::SHIFT | ModifiersState::CTRL);
@@ -279,7 +279,7 @@ mod tests {
         assert!(kc.modifier_pressed(KeyModifier::Shift));
         assert!(kc.modifier_pressed(KeyModifier::Ctrl));
 
-        kc.save_key_modifiers();
+        kc.save_modifiers();
 
         // Release Shift
         kc.modifiers_changed(ModifiersState::CTRL);
@@ -296,7 +296,7 @@ mod tests {
 
         assert!(kc.modifier_just_pressed(KeyModifier::Shift));
 
-        kc.save_key_modifiers();
+        kc.save_modifiers();
 
         // Release shift
         kc.modifiers_changed(ModifiersState::from_bits(0).unwrap());
@@ -314,7 +314,7 @@ mod tests {
         assert!(!kc.modifier_released(KeyModifier::Shift));
         assert!(!kc.modifier_released(KeyModifier::Ctrl));
 
-        kc.save_key_modifiers();
+        kc.save_modifiers();
 
         // Release shift
         kc.modifiers_changed(ModifiersState::from_bits(0).unwrap());

@@ -21,7 +21,6 @@ pub struct RenderContext {
     pub(crate) window_size: winit::dpi::PhysicalSize<u32>,
     pub(crate) window: Window,
 
-    // pub(crate) pixels_len: usize,
     pub(crate) compute_pipeline: wgpu::ComputePipeline,
     pub(crate) compute_bind_group: wgpu::BindGroup,
     // These two are a part of the bind group
@@ -50,13 +49,6 @@ pub(crate) struct Globals {
     pub(crate) focal_length: f32,
     pub(crate) time: f32,
 }
-
-// #[repr(C)]
-// #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-// struct Sphere {
-//     pos: [f32; 3],
-//     radius: f32,
-// }
 
 #[derive(ShaderType)]
 struct Sphere {

@@ -1,7 +1,7 @@
 use crate::context::Context;
 use crate::input::{KeyCode, KeyModifier};
 
-/// Returns true if KeyCode is down
+/// Returns true if KeyCode is pressed
 /// Accepts repeating
 pub fn key_pressed(ctx: &Context, keycode: KeyCode) -> bool {
     ctx.input.keyboard.key_pressed(keycode)
@@ -17,7 +17,7 @@ pub fn key_released(ctx: &Context, keycode: KeyCode) -> bool {
     ctx.input.keyboard.key_released(keycode)
 }
 
-/// Returns true if KeyModifer is down
+/// Returns true if KeyModifer is pressed
 /// Accepts repeating
 pub fn modifier_pressed(ctx: &Context, key_modifier: KeyModifier) -> bool {
     ctx.input.keyboard.modifier_pressed(key_modifier)
