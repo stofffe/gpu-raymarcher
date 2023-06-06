@@ -42,9 +42,7 @@ pub(crate) async fn run_window<C: Callbacks + 'static>(
                         ctx.render.resize_window(**new_inner_size);
                     }
                     WindowEvent::CursorMoved { position, .. } => {
-                        ctx.input
-                            .mouse
-                            .set_pos((position.x, position.y), &ctx.render);
+                        ctx.input.mouse.set_pos(position.x, position.y, &ctx.render);
                     }
                     WindowEvent::MouseInput { state, button, .. } => match state {
                         ElementState::Pressed => ctx.input.mouse.press_button(*button),
@@ -53,6 +51,15 @@ pub(crate) async fn run_window<C: Callbacks + 'static>(
                     WindowEvent::CursorLeft { .. } => {
                         ctx.input.mouse.set_on_screen(false);
                     }
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        let (x, y) = match delta {
+                            winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                                (*x as f64, *y as f64)
+                            }
+                            winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
+                        };
+                        ctx.input.mouse.set_scroll_delta((x, y));
+                    }
                     WindowEvent::KeyboardInput { input, .. } => {
                         if let Some(keycode) = input.virtual_keycode {
                             match input.state {
@@ -60,6 +67,9 @@ pub(crate) async fn run_window<C: Callbacks + 'static>(
                                 ElementState::Released => ctx.input.keyboard.release_key(keycode),
                             }
                         }
+                    }
+                    WindowEvent::ModifiersChanged(modifiers) => {
+                        ctx.input.keyboard.modifiers_changed(*modifiers)
                     }
                     _ => {}
                 }

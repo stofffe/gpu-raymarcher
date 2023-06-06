@@ -38,6 +38,7 @@ where
         }
 
         ctx.input.keyboard.save_keys();
+        ctx.input.keyboard.save_key_modifiers();
         ctx.input.mouse.save_buttons();
         ctx.input.mouse.set_mouse_delta((0.0, 0.0));
 

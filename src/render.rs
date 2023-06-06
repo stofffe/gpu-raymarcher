@@ -1,5 +1,5 @@
 use encase::{ShaderType, StorageBuffer, UniformBuffer};
-use glam::{uvec2, vec3, UVec2, Vec3};
+use glam::{uvec2, vec3, Mat3, Mat4, UVec2, Vec3};
 use wgpu::{
     util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, Extent3d, PresentMode,
     Queue, RenderPipeline, Surface, SurfaceConfiguration, TextureView,
@@ -36,17 +36,19 @@ pub struct RenderContext {
     pub(crate) texture_bind_group: wgpu::BindGroup,
 
     pub(crate) globals: Globals,
+    pub(crate) resolution: (u32, u32),
 }
 
 // ShaderType auto pads!
 // Try to minimize size
 #[derive(Debug, Clone, ShaderType)]
 pub(crate) struct Globals {
-    screen_dim: UVec2,
-    camera_pos: Vec3,
-    light_pos: Vec3,
-    focal_length: f32,
-    time: f32,
+    pub(crate) screen_dim: UVec2,
+    pub(crate) camera_pos: Vec3,
+    pub(crate) camera_rot: Mat3,
+    pub(crate) light_pos: Vec3,
+    pub(crate) focal_length: f32,
+    pub(crate) time: f32,
 }
 
 // #[repr(C)]
@@ -75,7 +77,8 @@ impl RenderContext {
 
         // Input data
         let globals = Globals {
-            camera_pos: vec3(0.0, 0.0, -3.0),
+            camera_pos: Vec3::ZERO,
+            camera_rot: Mat3::from_rotation_y(0.0),
             light_pos: vec3(-2.0, 2.0, -4.0),
             screen_dim: uvec2(WIDTH, HEIGHT),
             focal_length: 1.0,
@@ -156,16 +159,8 @@ impl RenderContext {
             texture_bind_group,
 
             globals,
+            resolution: (WIDTH, HEIGHT),
         }
-    }
-
-    fn update_global_uniforms(&mut self, time_ctx: &TimeContext) {
-        self.globals.time = time_ctx.time_since_start();
-        let mut buffer = UniformBuffer::new(Vec::new());
-        buffer.write(&self.globals).unwrap();
-        let byte_buffer = buffer.into_inner();
-        self.queue
-            .write_buffer(&self.global_uniform_buffer, 0, &byte_buffer);
     }
 
     pub(crate) fn reconfigure_present_mode(&mut self, present_mode: PresentMode) {
@@ -180,6 +175,18 @@ impl RenderContext {
             self.surface_config.height = new_size.height;
             self.surface.configure(&self.device, &self.surface_config);
         }
+    }
+
+    fn update_global_uniforms(&mut self, time_ctx: &TimeContext) {
+        // Update fields
+        self.globals.time = time_ctx.time_since_start();
+
+        // Update buffer
+        let mut buffer = UniformBuffer::new(Vec::new());
+        buffer.write(&self.globals).unwrap();
+        let byte_buffer = buffer.into_inner();
+        self.queue
+            .write_buffer(&self.global_uniform_buffer, 0, &byte_buffer);
     }
 
     fn execute_compute(&mut self) {
