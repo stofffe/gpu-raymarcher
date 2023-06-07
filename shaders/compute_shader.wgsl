@@ -21,6 +21,7 @@ struct Globals {
     light_pos: vec3<f32>,
     focal_length: f32,
     time: f32,
+    shape_amount: u32,
 };
 
 const max_steps: u32 = 100u;
@@ -191,7 +192,8 @@ fn soft_shadow(pos: vec3<f32>, k: f32) -> f32 {
 
 fn map(pos: vec3<f32>) -> f32 {
     var min_dist = max_dist;
-    for (var i = 0u; i < arrayLength(&spheres); i++) {
+    //for (var i = 0u; i < arrayLength(&spheres); i++) {
+    for (var i = 0u; i < g.shape_amount; i++) {
         let sphere = spheres[i];
         let dist = sphere_sdf(pos, sphere.pos, sphere.radius);
         min_dist = min(min_dist, dist);

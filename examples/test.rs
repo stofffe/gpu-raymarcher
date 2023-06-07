@@ -34,6 +34,8 @@ impl Callbacks for App {
             let avg = self.tot_dt / self.frames as f32;
             let fps = 1.0 / avg;
             println!("avg ms: {avg}, avg fps: {fps}");
+            self.tot_dt = 0.0;
+            self.frames = 0;
         }
 
         // println!("{dt}");

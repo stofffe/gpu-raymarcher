@@ -1,3 +1,5 @@
+use std::num::NonZeroU64;
+
 use encase::{ShaderType, StorageBuffer, UniformBuffer};
 use glam::{uvec2, vec3, Mat3, Mat4, UVec2, Vec3};
 use wgpu::{
@@ -10,6 +12,7 @@ use crate::time::TimeContext;
 
 pub const WIDTH: u32 = 1280;
 pub const HEIGHT: u32 = 720;
+pub const MAX_SHAPE_AMOUNT: u64 = 256;
 
 pub struct RenderContext {
     pub(crate) surface: wgpu::Surface,
@@ -36,6 +39,7 @@ pub struct RenderContext {
 
     pub(crate) globals: Globals,
     pub(crate) resolution: (u32, u32),
+    pub(crate) spheres: Vec<Sphere>,
 }
 
 // ShaderType auto pads!
@@ -48,10 +52,23 @@ pub(crate) struct Globals {
     pub(crate) light_pos: Vec3,
     pub(crate) focal_length: f32,
     pub(crate) time: f32,
+    pub(crate) shape_amount: u32,
 }
 
+// struct Shapes {
+//     list: Vec<Shape>,
+// }
+//
+// #[derive(ShaderType)]
+// struct Shape {
+//     pos: Vec3,
+//     id: f32,
+//     v1: Vec3,
+//     f1: f32,
+// }
+
 #[derive(ShaderType)]
-struct Sphere {
+pub struct Sphere {
     pos: Vec3,
     radius: f32,
 }
@@ -67,7 +84,7 @@ impl RenderContext {
             create_surface_config(&window, &surface, &adapter, PresentMode::AutoVsync);
         surface.configure(&device, &surface_config);
 
-        // Input data
+        // Default global data
         let globals = Globals {
             camera_pos: Vec3::ZERO,
             camera_rot: Mat3::from_rotation_y(0.0),
@@ -75,6 +92,7 @@ impl RenderContext {
             screen_dim: uvec2(WIDTH, HEIGHT),
             focal_length: 1.0,
             time: 2.0,
+            shape_amount: 0,
         };
         dbg!(Globals::min_size());
 
@@ -117,7 +135,7 @@ impl RenderContext {
 
         // Create compute pipeline
         let (compute_pipeline, input_buffer, global_uniform_buffer, compute_bind_group) =
-            create_compute_pipeline(&device, &spheres, &globals, &texture_view);
+            create_compute_pipeline(&device, &globals, &texture_view);
 
         // Create render pipeline
         let (render_pipeline, texture_bind_group) =
@@ -152,6 +170,7 @@ impl RenderContext {
 
             globals,
             resolution: (WIDTH, HEIGHT),
+            spheres,
         }
     }
 
@@ -172,6 +191,7 @@ impl RenderContext {
     fn update_global_uniforms(&mut self, time_ctx: &TimeContext) {
         // Update fields
         self.globals.time = time_ctx.time_since_start();
+        self.globals.shape_amount = self.spheres.len() as u32;
 
         // Update buffer
         let mut buffer = UniformBuffer::new(Vec::new());
@@ -179,6 +199,14 @@ impl RenderContext {
         let byte_buffer = buffer.into_inner();
         self.queue
             .write_buffer(&self.global_uniform_buffer, 0, &byte_buffer);
+    }
+
+    fn update_input_buffer(&mut self) {
+        // self.spheres[0].pos += vec3(0.0, 0.1, 0.0);
+        let mut byte_buffer = Vec::new();
+        let mut buffer = StorageBuffer::new(&mut byte_buffer);
+        buffer.write(&self.spheres).unwrap();
+        self.queue.write_buffer(&self.input_buffer, 0, &byte_buffer);
     }
 
     fn execute_compute(&mut self) {
@@ -204,6 +232,7 @@ impl RenderContext {
     pub(crate) fn render(&mut self, time_ctx: &TimeContext) -> Result<(), wgpu::SurfaceError> {
         // Execute raymarching compute shader
         self.update_global_uniforms(time_ctx);
+        self.update_input_buffer();
         self.execute_compute();
 
         // Render texture
@@ -303,7 +332,6 @@ fn create_surface_config(
 
 fn create_compute_pipeline(
     device: &Device,
-    spheres: &[Sphere],
     globals: &Globals,
     texture_view: &TextureView,
 ) -> (ComputePipeline, Buffer, Buffer, BindGroup) {
@@ -353,18 +381,28 @@ fn create_compute_pipeline(
     });
 
     // Sphere buffer
-    let mut byte_buffer = Vec::new();
-    let mut buffer = StorageBuffer::new(&mut byte_buffer);
-    buffer.write(&spheres).unwrap();
+    // let spheres = Vec::<Sphere>::new();
+    // let mut byte_buffer = Vec::new();
+    // let mut buffer = StorageBuffer::new(&mut byte_buffer);
+    // buffer.write(&spheres).unwrap();
 
-    let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("storage buffer"),
-        contents: &byte_buffer,
+    let buffer_size = u64::from(Sphere::min_size()) * MAX_SHAPE_AMOUNT;
+    let input_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("shape buffer"),
+        size: buffer_size,
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC,
-        // contents: bytemuck::cast_slice(spheres),
+        mapped_at_creation: false,
     });
+    // let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //     label: Some("storage buffer"),
+    //     contents: &byte_buffer,
+    //     usage: wgpu::BufferUsages::STORAGE
+    //         | wgpu::BufferUsages::COPY_DST
+    //         | wgpu::BufferUsages::COPY_SRC,
+    //     // contents: bytemuck::cast_slice(spheres),
+    // });
 
     // Globals unfiform
     let mut buffer = UniformBuffer::new(Vec::new());
