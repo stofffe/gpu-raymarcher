@@ -1,7 +1,7 @@
 use glam::{vec3, Mat3, Vec3};
 use gpu_raymarcher::{
-    cmd::{keyboard, mouse, render, window},
-    Callbacks, Context, KeyCode, KeyModifier, Sphere,
+    cmd::{keyboard, mouse, render, time, window},
+    Callbacks, Context, KeyCode, KeyModifier, Shape,
 };
 
 const CAMERA_MOVE_SPEED: f32 = 1.0;
@@ -108,34 +108,20 @@ impl App {
     }
 
     fn update(&mut self, ctx: &mut Context) {
-        render::add_sphere(
+        let t = time::time_since_start(ctx).sin();
+        render::render_shape(ctx, Shape::sphere(vec3(1.0, t, 3.0), 1.0));
+        render::render_shape(
             ctx,
-            Sphere {
-                pos: vec3(1.0, 1.0, 0.0),
-                radius: 1.0,
-            },
+            Shape::box_exact(vec3(t + 0.5, 0.0, 0.0), vec3(2.0, 1.0, 1.0)),
         );
-        render::add_sphere(
-            ctx,
-            Sphere {
-                pos: vec3(3.0, 1.0, 0.0),
-                radius: 1.0,
-            },
-        );
-        render::add_sphere(
-            ctx,
-            Sphere {
-                pos: vec3(-1.0, 0.5, 2.0),
-                radius: 1.0,
-            },
-        );
-        render::add_sphere(
-            ctx,
-            Sphere {
-                pos: vec3(-0.0, -0.0, 0.0),
-                radius: 0.2,
-            },
-        );
+        render::render_shape(ctx, Shape::plane(vec3(0.0, -1.0, 0.0), vec3(0.0, 1.0, 0.0)));
+        render::render_shape(ctx, Shape::plane(vec3(-3.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0)));
+        // render::render_shape(
+        //     ctx,
+        //     Shape::box_exact(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)),
+        // );
+        // render::add_shape(ctx, Shape::sphere(vec3(-1.0, 0.5, 2.0), 1.0));
+        // render::add_shape(ctx, Shape::sphere(vec3(-0.0, -0.0, 0.0), 0.2));
     }
 }
 

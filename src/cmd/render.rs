@@ -1,7 +1,7 @@
 use glam::{uvec2, Mat3, Vec3};
 
 use crate::{
-    render::{Sphere, MAX_SHAPE_AMOUNT},
+    render::{Shape, MAX_SHAPE_AMOUNT},
     Context,
 };
 
@@ -28,14 +28,15 @@ pub fn resize(ctx: &mut Context, width: u32, height: u32) {
         "screen dimensions can not be zero"
     );
     ctx.render.globals.screen_dim = uvec2(width, height);
+    // TODO resize render texture
 }
 
 /// Adds a sphere to the next frame
-pub fn add_sphere(ctx: &mut Context, sphere: Sphere) {
+pub fn render_shape(ctx: &mut Context, shape: Shape) {
     debug_assert!(
         ctx.render.spheres.len() < MAX_SHAPE_AMOUNT as usize,
         "can not add more shapes than max: {}",
         MAX_SHAPE_AMOUNT
     );
-    ctx.render.spheres.push(sphere);
+    ctx.render.spheres.push(shape);
 }

@@ -1,5 +1,3 @@
-use std::num::NonZeroU64;
-
 use encase::{ShaderType, StorageBuffer, UniformBuffer};
 use glam::{uvec2, vec3, Mat3, Mat4, UVec2, Vec3};
 use wgpu::{
@@ -39,7 +37,7 @@ pub struct RenderContext {
 
     pub(crate) globals: Globals,
     pub(crate) resolution: (u32, u32),
-    pub(crate) spheres: Vec<Sphere>,
+    pub(crate) spheres: Vec<Shape>,
 }
 
 // ShaderType auto pads!
@@ -55,23 +53,49 @@ pub(crate) struct Globals {
     pub(crate) shape_amount: u32,
 }
 
-// struct Shapes {
-//     list: Vec<Shape>,
-// }
-//
-// #[derive(ShaderType)]
-// struct Shape {
-//     pos: Vec3,
-//     id: f32,
-//     v1: Vec3,
-//     f1: f32,
-// }
-
-#[derive(ShaderType)]
-pub struct Sphere {
+#[derive(Default, ShaderType)]
+pub struct Shape {
     pub pos: Vec3,
-    pub radius: f32,
+    pub id: u32,
+    pub v1: Vec3,
+    pub f1: f32,
 }
+
+// TODO normalize here or let user?
+impl Shape {
+    pub fn sphere(pos: Vec3, radius: f32) -> Self {
+        Self {
+            pos,
+            id: 0,
+            f1: radius,
+            ..Default::default()
+        }
+    }
+
+    pub fn box_exact(pos: Vec3, b: Vec3) -> Self {
+        Self {
+            pos,
+            id: 1,
+            v1: b.normalize(),
+            ..Default::default()
+        }
+    }
+
+    pub fn plane(pos: Vec3, normal: Vec3) -> Self {
+        Self {
+            pos,
+            id: 2,
+            v1: normal.normalize(),
+            ..Default::default()
+        }
+    }
+}
+
+// #[derive(ShaderType)]
+// pub struct Sphere {
+//     pub pos: Vec3,
+//     pub radius: f32,
+// }
 
 impl RenderContext {
     // Creating some of the wgpu types requires async code
@@ -95,8 +119,9 @@ impl RenderContext {
             shape_amount: 0,
         };
         dbg!(Globals::min_size());
+        dbg!(Shape::min_size());
 
-        let spheres = Vec::<Sphere>::with_capacity(MAX_SHAPE_AMOUNT as usize);
+        let spheres = Vec::<Shape>::with_capacity(MAX_SHAPE_AMOUNT as usize);
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("texture desc"),
@@ -250,7 +275,7 @@ impl RenderContext {
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.submit(Some(encoder.finish()));
         output.present();
 
         Ok(())
@@ -371,7 +396,7 @@ fn create_compute_pipeline(
     // let mut buffer = StorageBuffer::new(&mut byte_buffer);
     // buffer.write(&spheres).unwrap();
 
-    let buffer_size = u64::from(Sphere::min_size()) * MAX_SHAPE_AMOUNT;
+    let buffer_size = u64::from(Shape::min_size()) * MAX_SHAPE_AMOUNT;
     let input_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("shape buffer"),
         size: buffer_size,

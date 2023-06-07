@@ -1,18 +1,26 @@
-@group(0) @binding(0) var<storage, read> spheres: array<Sphere>;
+@group(0) @binding(0) var<storage, read> shapes: array<Shape>;
 @group(0) @binding(1) var<uniform> g: Globals;
 @group(0) @binding(2) var texture: texture_storage_2d<rgba8unorm, write>;
  
-// const colors: array<vec3<f32>, 4> = array<vec3<f32>, 4>(
-//     vec3<f32>(1.0, 1.0, 1.0),
-//     vec3<f32>(1.0, 0.0, 0.0),
-//     vec3<f32>(0.0, 1.0, 0.0),
-//     vec3<f32>(0.0, 0.0, 1.0),
-// );
-
-struct Sphere {
+struct Shape {
     pos: vec3<f32>,
-    radius: f32,
+    id: u32,
+    v1: vec3<f32>,
+    f1: f32,
 };
+
+const SPHERE_ID: u32 = 0u;
+const BOX_EXACT_ID: u32 = 1u;
+const PLANE_ID: u32 = 2u;
+
+
+// Box exact
+// id: 1
+// v1 b
+
+// Plane
+// id: 2
+// v1: normal
 
 struct Globals {
     screen_dim: vec2<u32>,
@@ -27,8 +35,8 @@ struct Globals {
 const max_steps: u32 = 100u;
 const max_dist: f32 = 50.0;
 const surface_dist: f32 = 0.0001;
-const epsilon: f32 = 0.00001;
-const shadow_step: f32 = 0.005;
+const epsilon: f32 = 0.00001; // surface_dist * 0.1
+const shadow_step: f32 = 0.005; // surface_dist * 50
 const soft_shadow_sharpness: f32 = 8.0;
 const specular_sharpness: f32 = 10.0;
 const specular_intensity: f32 = 0.3;
@@ -40,6 +48,7 @@ const occlusion_weight_drop = 0.85;
 const ambient_intensity: f32 = 0.05;
 const back_intensity: f32 = 0.05;
 const fresnel_intensity: f32 = 0.15;
+const fog_inesity: f32 = 2.0;
 
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) coord: vec3<u32>) {
@@ -54,6 +63,8 @@ fn cs_main(@builtin(global_invocation_id) coord: vec3<u32>) {
     let rd = normalize(g.camera_rot * vec3<f32>(uv.xy, g.focal_length));
     let color = raymarch_color(ro, rd);
 
+    textureStore(texture, coord.xy, vec4<f32>(color, 1.0));
+
     // var color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     // if dist < g.max_dist {
     //    color = vec4<f32>(1.0);
@@ -61,7 +72,6 @@ fn cs_main(@builtin(global_invocation_id) coord: vec3<u32>) {
     // color = 1.0 - vec4<f32>(vec3<f32>(dist / g.max_dist), 1.0);
 
     // color = vec4<f32>(uv, 0.0, 1.0);
-    textureStore(texture, coord.xy, vec4<f32>(color, 1.0));
 }
 
 fn raymarch(ro: vec3<f32>, rd: vec3<f32>) -> f32 {
@@ -108,10 +118,12 @@ fn hit(pos: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
     let shadow = soft_shadow(pos, soft_shadow_sharpness);
     let occlusion = ambient_occlusion(pos, normal);
 
+    let fog = 1.0 - length(g.camera_pos - pos) / max_dist;
+
     var color = vec3<f32>(0.0, 1.0, 1.0);
 
     let light = (ambient + back + fresnel) * occlusion + (diffuse + specular * occlusion) * shadow;
-    color *= light;
+    color *= light * fog;
 
     // Gamma correction
     color = pow(color, vec3<f32>(0.4545));
@@ -189,33 +201,62 @@ fn soft_shadow(pos: vec3<f32>, k: f32) -> f32 {
     return shadow;
 }
 
-
 fn map(pos: vec3<f32>) -> f32 {
     var min_dist = max_dist;
     //for (var i = 0u; i < arrayLength(&spheres); i++) {
     for (var i = 0u; i < g.shape_amount; i++) {
-        let sphere = spheres[i];
-        let dist = sphere_sdf(pos, sphere.pos, sphere.radius);
-        min_dist = min(min_dist, dist);
+        let shape = shapes[i];
+        let id = shape.id;
+
+        switch id {
+            case 0u: {
+                min_dist = min(min_dist, sphere_sdf(pos, shape));
+            }
+            case 1u: {
+                min_dist = min(min_dist, box_exact_sdf(pos, shape));
+            }
+            case 2u: {
+                min_dist = min(min_dist, plane_sdf(pos, shape));
+            }
+            default: {}
+        };
     }
 
-    let plane = plane_sdf(pos, vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0));
-    min_dist = min(min_dist, plane);
+    // let plane = plane_sdf2(pos, vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0));
+    // min_dist = min(min_dist, plane);
 
-    let plane2 = plane_sdf(pos, vec3(1.0, 0.0, 0.0), vec3<f32>(-3.0, 0.0, 0.0));
-    min_dist = min(min_dist, plane2);
+    // let plane2 = plane_sdf2(pos, vec3(1.0, 0.0, 0.0), vec3<f32>(-3.0, 0.0, 0.0));
+    // min_dist = min(min_dist, plane2);
 
     return min_dist;
+
+
+    // return min_dist;
 }
 
-fn plane_sdf(pos: vec3<f32>, normal: vec3<f32>, translation: vec3<f32>) -> f32 {
-    return dot((pos - translation), normal);
-    // return dot(pos, normal) - dist_along_normal;
+// f1: radius
+fn sphere_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
+    return length(pos - shape.pos) - shape.f1;
 }
 
-fn sphere_sdf(pos: vec3<f32>, translation: vec3<f32>, radius: f32) -> f32 {
-    return length(pos - translation) - radius;
+// v1: b
+fn box_exact_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
+    let q = abs(pos - shape.pos) - shape.v1;
+    return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
 }
+
+// v1: normal
+fn plane_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
+    return dot((pos - shape.pos), shape.v1);
+}
+
+// fn plane_sdf2(pos: vec3<f32>, normal: vec3<f32>, translation: vec3<f32>) -> f32 {
+//     return dot((pos - translation), normal);
+//     // return dot(pos, normal) - dist_along_normal;
+// }
+// fn sphere_sdf(pos: vec3<f32>, translation: vec3<f32>, radius: f32) -> f32 {
+//     return length(pos - translation) - radius;
+// }
 
 // fn soft_shadow(pos: vec3<f32>, k: f32) -> f32 {
 //     let light_dir = normalize(g.light_pos - pos);
