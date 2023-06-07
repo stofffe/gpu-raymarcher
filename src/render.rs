@@ -69,8 +69,8 @@ pub(crate) struct Globals {
 
 #[derive(ShaderType)]
 pub struct Sphere {
-    pos: Vec3,
-    radius: f32,
+    pub pos: Vec3,
+    pub radius: f32,
 }
 
 impl RenderContext {
@@ -96,24 +96,7 @@ impl RenderContext {
         };
         dbg!(Globals::min_size());
 
-        let spheres = vec![
-            Sphere {
-                pos: vec3(1.0, 1.0, 0.0),
-                radius: 1.0,
-            },
-            Sphere {
-                pos: vec3(3.0, 1.0, 0.0),
-                radius: 1.0,
-            },
-            Sphere {
-                pos: vec3(-1.0, 0.5, 2.0),
-                radius: 1.0,
-            },
-            Sphere {
-                pos: vec3(-0.0, -0.0, 0.0),
-                radius: 0.2,
-            },
-        ];
+        let spheres = Vec::<Sphere>::with_capacity(MAX_SHAPE_AMOUNT as usize);
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("texture desc"),
@@ -207,6 +190,8 @@ impl RenderContext {
         let mut buffer = StorageBuffer::new(&mut byte_buffer);
         buffer.write(&self.spheres).unwrap();
         self.queue.write_buffer(&self.input_buffer, 0, &byte_buffer);
+
+        self.spheres.clear();
     }
 
     fn execute_compute(&mut self) {

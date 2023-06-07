@@ -1,7 +1,7 @@
 use glam::{vec3, Mat3, Vec3};
 use gpu_raymarcher::{
     cmd::{keyboard, mouse, render, window},
-    Callbacks, Context, KeyCode, KeyModifier,
+    Callbacks, Context, KeyCode, KeyModifier, Sphere,
 };
 
 const CAMERA_MOVE_SPEED: f32 = 1.0;
@@ -26,7 +26,7 @@ impl Callbacks for App {
 
     fn update(&mut self, ctx: &mut Context, dt: f32) -> bool {
         self.input(ctx, dt);
-        self.draw();
+        self.update(ctx);
 
         self.tot_dt += dt;
         self.frames += 1;
@@ -106,7 +106,37 @@ impl App {
         render::set_camera_pos(ctx, self.camera_pos);
         render::set_focal_length(ctx, self.focal_len);
     }
-    fn draw(&mut self) {}
+
+    fn update(&mut self, ctx: &mut Context) {
+        render::add_sphere(
+            ctx,
+            Sphere {
+                pos: vec3(1.0, 1.0, 0.0),
+                radius: 1.0,
+            },
+        );
+        render::add_sphere(
+            ctx,
+            Sphere {
+                pos: vec3(3.0, 1.0, 0.0),
+                radius: 1.0,
+            },
+        );
+        render::add_sphere(
+            ctx,
+            Sphere {
+                pos: vec3(-1.0, 0.5, 2.0),
+                radius: 1.0,
+            },
+        );
+        render::add_sphere(
+            ctx,
+            Sphere {
+                pos: vec3(-0.0, -0.0, 0.0),
+                radius: 0.2,
+            },
+        );
+    }
 }
 
 fn main() {

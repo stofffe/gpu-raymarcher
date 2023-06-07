@@ -1,6 +1,9 @@
 use glam::{uvec2, Mat3, Vec3};
 
-use crate::Context;
+use crate::{
+    render::{Sphere, MAX_SHAPE_AMOUNT},
+    Context,
+};
 
 /// Sets the internal camera position
 pub fn set_camera_pos(ctx: &mut Context, pos: Vec3) {
@@ -14,10 +17,25 @@ pub fn set_camera_rot(ctx: &mut Context, rot: Mat3) {
 
 /// Sets the internal camera focal length
 pub fn set_focal_length(ctx: &mut Context, focal_length: f32) {
+    debug_assert!(focal_length > 0.0, "focal length must be greater than 0");
     ctx.render.globals.focal_length = focal_length;
 }
 
 /// Resizes the render texture
 pub fn resize(ctx: &mut Context, width: u32, height: u32) {
+    debug_assert!(
+        width != 0 || height != 0,
+        "screen dimensions can not be zero"
+    );
     ctx.render.globals.screen_dim = uvec2(width, height);
+}
+
+/// Adds a sphere to the next frame
+pub fn add_sphere(ctx: &mut Context, sphere: Sphere) {
+    debug_assert!(
+        ctx.render.spheres.len() < MAX_SHAPE_AMOUNT as usize,
+        "can not add more shapes than max: {}",
+        MAX_SHAPE_AMOUNT
+    );
+    ctx.render.spheres.push(sphere);
 }
