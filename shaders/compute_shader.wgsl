@@ -50,6 +50,8 @@ const back_intensity: f32 = 0.05;
 const fresnel_intensity: f32 = 0.15;
 const fog_inesity: f32 = 2.0;
 
+const stack_size: u32 = 10u;
+
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) coord: vec3<u32>) {
 
@@ -97,6 +99,7 @@ fn raymarch_color(ro: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
     let dist = raymarch(ro, rd);
     if dist < max_dist {
         let pos = ro + rd * dist;
+        //return vec3(1.0);
         return hit(pos, rd);
     } else {
         return miss();
@@ -201,37 +204,80 @@ fn soft_shadow(pos: vec3<f32>, k: f32) -> f32 {
     return shadow;
 }
 
+struct SE {
+    op_type: i32, // 0 un, 1 in, 2, sub, 3 sun, 4 sin, 5 ssub
+    op_amount: i32,
+    dist: f32,
+}
+
 fn map(pos: vec3<f32>) -> f32 {
-    var min_dist = max_dist;
-    //for (var i = 0u; i < arrayLength(&spheres); i++) {
-    for (var i = 0u; i < g.shape_amount; i++) {
-        let shape = shapes[i];
-        let id = shape.id;
+    var stack = array<SE, 10>();
+    var si = 0; // stack index
+    stack[si] = SE(0, i32(g.shape_amount), max_dist);
+    var i = 0;
 
-        switch id {
-            case 0u: {
-                min_dist = min(min_dist, sphere_sdf(pos, shape));
+    while true {
+        // Pop operation result from stack
+        // Return if stack empty
+        if stack[si].op_amount == 0 {
+            if si == 0 {
+                break;
+            } else {
+                si--;
+                stack[si].dist = min(stack[si].dist, stack[si+1].dist);
+                continue;
             }
-            case 1u: {
-                min_dist = min(min_dist, box_exact_sdf(pos, shape));
+        }
+        stack[si].op_amount--;
+
+        switch shapes[i].id {
+            // Push union to stack
+            case 3u: {
+                si++;
+                stack[si] = SE(0,2, max_dist);
             }
-            case 2u: {
-                min_dist = min(min_dist, plane_sdf(pos, shape));
+            // Push intersection to stack
+            case 4u: {
+                si++;
+                stack[si] = SE(1,2, -1.0);
             }
-            default: {}
-        };
+            // Perform current operation on stack
+            default: {
+                switch stack[si].op_type {
+                    // Union
+                    case 0: {
+                        stack[si].dist = min(stack[si].dist, shape_dist(pos, i));
+                    }
+                    // Intersection
+                    case 1: {
+                        stack[si].dist = max(stack[si].dist, shape_dist(pos, i));
+                    }
+                    default: {}
+                }
+            }
+        }
+
+        i++;
     }
+    return stack[si].dist;
+}
 
-    // let plane = plane_sdf2(pos, vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0));
-    // min_dist = min(min_dist, plane);
-
-    // let plane2 = plane_sdf2(pos, vec3(1.0, 0.0, 0.0), vec3<f32>(-3.0, 0.0, 0.0));
-    // min_dist = min(min_dist, plane2);
-
-    return min_dist;
-
-
-    // return min_dist;
+fn shape_dist(pos: vec3<f32>, i: i32) -> f32 {
+    let shape = shapes[i];
+    switch shape.id {
+        case 0u: {
+            return sphere_sdf(pos, shape);
+        }
+        case 1u: {
+            return box_exact_sdf(pos, shape);
+        }
+        case 2u: {
+            return plane_sdf(pos, shape);
+        }
+        default: {
+            return max_dist;
+        }
+    }
 }
 
 // f1: radius
@@ -249,6 +295,78 @@ fn box_exact_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
 fn plane_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
     return dot((pos - shape.pos), shape.v1);
 }
+
+// 
+// fn get_dist_2(pos: vec3<f32>, idx: u32, op: i32, dist: f32) -> f32 {
+//     let shape = shapes[idx];
+//     let id = shape.id;
+// 
+//     switch op {
+//         // Normal
+//         case 0: {
+//             return min(dist)
+//         }
+// 
+//     }
+// 
+//     switch id {
+//         case 
+// 
+//     }
+// }
+// 
+// fn get_dist_3(pos: vec3<f32>, idx: u32) -> f32 {
+//     let shape = shapes[idx];
+//     let id = shape.id;
+// 
+//     switch id {
+//         case 0u: {
+//             return sphere_sdf(pos, shape);
+//         }
+//     }
+// }
+// 
+// fn get_dist(pos: vec3<f32>, i: u32) -> f32 {
+//     let id = shapes[i].id;
+//     switch id {
+//         case 0u: {
+//             return sphere_sdf(pos, i);
+//         }
+//         case 1u: {
+//             // return box_exact_sdf(pos, shape);
+//         }
+//         case 2u: {
+//             //return plane_sdf(pos, shape);
+//         }
+//         case 3u: {
+//             return union_sdf(pos, i);
+//         }
+//         default: {}
+//     };
+//     return max_dist;
+// }
+
+// fn sphere_sdf(pos: vec3<f32>, i: u32) -> f32 {
+//     let shape = shapes[i];
+//     return length(pos - shape.pos) - shape.f1;
+// }
+
+// f1: radius
+// 
+// // v1: b
+// fn box_exact_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
+//     let q = abs(pos - shape.pos) - shape.v1;
+//     return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+// }
+// 
+// // v1: normal
+// fn plane_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
+//     return dot((pos - shape.pos), shape.v1);
+// }
+// 
+// fn union_sdf(pos: vec3<f32>, shape1: Shape, shape2: Shape) -> f32 {
+//     return min()
+// }
 
 // fn plane_sdf2(pos: vec3<f32>, normal: vec3<f32>, translation: vec3<f32>) -> f32 {
 //     return dot((pos - translation), normal);
