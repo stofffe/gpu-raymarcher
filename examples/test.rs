@@ -1,7 +1,7 @@
 use glam::{vec3, Mat3, Vec3};
 use gpu_raymarcher::{
     cmd::{keyboard, mouse, render, time, window},
-    Callbacks, Context, KeyCode, KeyModifier, ShapeCPU, ShapesCPU,
+    Callbacks, Context, KeyCode, KeyModifier, Shape,
 };
 
 const CAMERA_MOVE_SPEED: f32 = 1.0;
@@ -38,7 +38,6 @@ impl Callbacks for App {
             self.frames = 0;
         }
 
-        // println!("{dt}");
         false
     }
 }
@@ -109,95 +108,38 @@ impl App {
 
     fn update(&mut self, ctx: &mut Context) {
         let t = time::time_since_start(ctx).sin();
-        let mut shapes = ShapesCPU(Vec::new());
-        shapes.add(ShapeCPU::Union {
-            shape1: Box::new(ShapeCPU::Union {
-                shape1: Box::new(ShapeCPU::Sphere {
-                    pos: vec3(-1.5, 1.0, 0.0),
-                    radius: 0.5,
+        render::render_shape(
+            ctx,
+            Shape::Union {
+                shape1: Box::new(Shape::Union {
+                    shape1: Box::new(Shape::Sphere {
+                        pos: vec3(-1.5, 1.0, 0.0),
+                        radius: 0.5,
+                    }),
+                    shape2: Box::new(Shape::BoxExact {
+                        pos: vec3(-1.5, 0.0, 0.0),
+                        b: vec3(1.0, 1.0, 1.0),
+                    }),
                 }),
-                shape2: Box::new(ShapeCPU::BoxExact {
-                    pos: vec3(-1.5, 0.0, 0.0),
-                    b: vec3(1.0, 1.0, 1.0),
+                shape2: Box::new(Shape::Intersection {
+                    shape1: Box::new(Shape::Sphere {
+                        pos: vec3(1.0, 0.0, 0.0),
+                        radius: 1.5,
+                    }),
+                    shape2: Box::new(Shape::Sphere {
+                        pos: vec3(3.0, 0.0, 0.0),
+                        radius: 1.5,
+                    }),
                 }),
-            }),
-            shape2: Box::new(ShapeCPU::Intersection {
-                shape1: Box::new(ShapeCPU::Sphere {
-                    pos: vec3(1.0, 0.0, 0.0),
-                    radius: 1.5,
-                }),
-                shape2: Box::new(ShapeCPU::Sphere {
-                    pos: vec3(3.0, 0.0, 0.0),
-                    radius: 1.5,
-                }),
-            }),
-        });
-        render::render_raymarch(ctx, shapes);
-        // shapes.add(ShapeCPU::Sphere {
-        //     pos: vec3(0.0, t, 0.0),
-        //     radius: 1.0,
-        // });
-        // shapes.add(ShapeCPU::Sphere {
-        //     pos: vec3(-2.0, t, 0.0),
-        //     radius: 1.0,
-        // });
-        // shapes.add(ShapeCPU::Sphere {
-        //     pos: vec3(0.0, 2.0, 0.0).normalize(),
-        //     radius: 1.0,
-        // });
-        // shapes.add(ShapeCPU::Intersection {
-        //     // Useless rn
-        //     shape1: Box::new(ShapeCPU::Sphere {
-        //         pos: vec3(1.0, -1.0, 0.0),
-        //         radius: 1.5,
-        //     }),
-        //     shape2: Box::new(ShapeCPU::Sphere {
-        //         pos: vec3(-1.0, -1.0, 0.0),
-        //         radius: 1.5,
-        //     }),
-        // });
-        // shapes.add(ShapeCPU::Intersection {
-        //     // Useless rn
-        //     shape1: Box::new(ShapeCPU::Sphere {
-        //         pos: vec3(5.0, -1.0, 0.0),
-        //         radius: 1.5,
-        //     }),
-        //     shape2: Box::new(ShapeCPU::Sphere {
-        //         pos: vec3(3.0, -1.0, 0.0),
-        //         radius: 1.5,
-        //     }),
-        // });
-        // shapes.add(ShapeCPU::Sphere {
-        //     pos: vec3(0.0, 0.5, 0.0).normalize(),
-        //     radius: 2.0,
-        // });
-        // shapes.add(ShapeCPU::Sphere {
-        //     pos: vec3(1.0, -1.0, 0.0).normalize(),
-        //     radius: 2.0,
-        // });
-        // shapes.add(ShapeCPU::Sphere {
-        //     pos: vec3(-1.0, -1.0, 0.0).normalize(),
-        //     radius: 2.0,
-        // });
-        // render::render_shape(ctx, ShapeGPU::sphere(vec3(1.0, t, 3.0), 1.0));
-        // render::render_shape(
-        //     ctx,
-        //     ShapeGPU::box_exact(vec3(t + 0.5, 0.0, 0.0), vec3(2.0, 1.0, 1.0)),
-        // );
-        // render::render_shape(
-        //     ctx,
-        //     ShapeGPU::plane(vec3(0.0, -1.0, 0.0), vec3(0.0, 1.0, 0.0)),
-        // );
-        // render::render_shape(
-        //     ctx,
-        //     ShapeGPU::plane(vec3(-3.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0)),
-        // );
-        // render::render_shape(
-        //     ctx,
-        //     Shape::box_exact(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)),
-        // );
-        // render::add_shape(ctx, Shape::sphere(vec3(-1.0, 0.5, 2.0), 1.0));
-        // render::add_shape(ctx, Shape::sphere(vec3(-0.0, -0.0, 0.0), 0.2));
+            },
+        );
+        render::render_shape(
+            ctx,
+            Shape::Sphere {
+                pos: vec3(t, -4.0, 0.0),
+                radius: t.abs().clamp(0.3, 1.0),
+            },
+        );
     }
 }
 

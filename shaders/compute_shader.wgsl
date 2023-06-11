@@ -9,19 +9,6 @@ struct Shape {
     f1: f32,
 };
 
-const SPHERE_ID: u32 = 0u;
-const BOX_EXACT_ID: u32 = 1u;
-const PLANE_ID: u32 = 2u;
-
-
-// Box exact
-// id: 1
-// v1 b
-
-// Plane
-// id: 2
-// v1: normal
-
 struct Globals {
     screen_dim: vec2<u32>,
     camera_pos: vec3<f32>,
@@ -66,14 +53,6 @@ fn cs_main(@builtin(global_invocation_id) coord: vec3<u32>) {
     let color = raymarch_color(ro, rd);
 
     textureStore(texture, coord.xy, vec4<f32>(color, 1.0));
-
-    // var color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    // if dist < g.max_dist {
-    //    color = vec4<f32>(1.0);
-    // }
-    // color = 1.0 - vec4<f32>(vec3<f32>(dist / g.max_dist), 1.0);
-
-    // color = vec4<f32>(uv, 0.0, 1.0);
 }
 
 fn raymarch(ro: vec3<f32>, rd: vec3<f32>) -> f32 {
@@ -210,6 +189,8 @@ struct SE {
     dist: f32,
 }
 
+
+// If wgsl supports switching on const, use that instead
 fn map(pos: vec3<f32>) -> f32 {
     var stack = array<SE, 10>();
     var si = 0; // stack index
@@ -224,7 +205,7 @@ fn map(pos: vec3<f32>) -> f32 {
                 break;
             } else {
                 si--;
-                stack[si].dist = min(stack[si].dist, stack[si+1].dist);
+                stack[si].dist = min(stack[si].dist, stack[si + 1].dist);
                 continue;
             }
         }
@@ -232,15 +213,19 @@ fn map(pos: vec3<f32>) -> f32 {
 
         switch shapes[i].id {
             // Push union to stack
-            case 3u: {
+            case 0u: {
                 si++;
-                stack[si] = SE(0,2, max_dist);
+                stack[si] = SE(0, 2, max_dist);
             }
             // Push intersection to stack
-            case 4u: {
+            case 1u: {
                 si++;
-                stack[si] = SE(1,2, -1.0);
+                stack[si] = SE(1, 2, -1.0);
             }
+            // case 2u: {
+            //     si++;
+            //     stack[si] = SE(2, 2, -1.0);
+            // }
             // Perform current operation on stack
             default: {
                 switch stack[si].op_type {
@@ -265,13 +250,13 @@ fn map(pos: vec3<f32>) -> f32 {
 fn shape_dist(pos: vec3<f32>, i: i32) -> f32 {
     let shape = shapes[i];
     switch shape.id {
-        case 0u: {
+        case 6u: {
             return sphere_sdf(pos, shape);
         }
-        case 1u: {
+        case 7u: {
             return box_exact_sdf(pos, shape);
         }
-        case 2u: {
+        case 8u: {
             return plane_sdf(pos, shape);
         }
         default: {
@@ -295,108 +280,3 @@ fn box_exact_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
 fn plane_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
     return dot((pos - shape.pos), shape.v1);
 }
-
-// 
-// fn get_dist_2(pos: vec3<f32>, idx: u32, op: i32, dist: f32) -> f32 {
-//     let shape = shapes[idx];
-//     let id = shape.id;
-// 
-//     switch op {
-//         // Normal
-//         case 0: {
-//             return min(dist)
-//         }
-// 
-//     }
-// 
-//     switch id {
-//         case 
-// 
-//     }
-// }
-// 
-// fn get_dist_3(pos: vec3<f32>, idx: u32) -> f32 {
-//     let shape = shapes[idx];
-//     let id = shape.id;
-// 
-//     switch id {
-//         case 0u: {
-//             return sphere_sdf(pos, shape);
-//         }
-//     }
-// }
-// 
-// fn get_dist(pos: vec3<f32>, i: u32) -> f32 {
-//     let id = shapes[i].id;
-//     switch id {
-//         case 0u: {
-//             return sphere_sdf(pos, i);
-//         }
-//         case 1u: {
-//             // return box_exact_sdf(pos, shape);
-//         }
-//         case 2u: {
-//             //return plane_sdf(pos, shape);
-//         }
-//         case 3u: {
-//             return union_sdf(pos, i);
-//         }
-//         default: {}
-//     };
-//     return max_dist;
-// }
-
-// fn sphere_sdf(pos: vec3<f32>, i: u32) -> f32 {
-//     let shape = shapes[i];
-//     return length(pos - shape.pos) - shape.f1;
-// }
-
-// f1: radius
-// 
-// // v1: b
-// fn box_exact_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
-//     let q = abs(pos - shape.pos) - shape.v1;
-//     return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
-// }
-// 
-// // v1: normal
-// fn plane_sdf(pos: vec3<f32>, shape: Shape) -> f32 {
-//     return dot((pos - shape.pos), shape.v1);
-// }
-// 
-// fn union_sdf(pos: vec3<f32>, shape1: Shape, shape2: Shape) -> f32 {
-//     return min()
-// }
-
-// fn plane_sdf2(pos: vec3<f32>, normal: vec3<f32>, translation: vec3<f32>) -> f32 {
-//     return dot((pos - translation), normal);
-//     // return dot(pos, normal) - dist_along_normal;
-// }
-// fn sphere_sdf(pos: vec3<f32>, translation: vec3<f32>, radius: f32) -> f32 {
-//     return length(pos - translation) - radius;
-// }
-
-// fn soft_shadow(pos: vec3<f32>, k: f32) -> f32 {
-//     let light_dir = normalize(g.light_pos - pos);
-//     let light_dist = length(g.light_pos - pos);
-// 
-//     var t = g.shadow_step;
-//     var shadow = 1.0;
-// 
-//     for (var i = 0u; i < g.max_steps; i++) {
-//         if t >= light_dist {
-//             return shadow;
-//         }
-// 
-//         let pos = pos + light_dir * t;
-//         let dist = map(pos);
-// 
-//         if dist < g.surface_dist {
-//             return 0.0;
-//         }
-// 
-//         shadow = min(shadow, k * dist / t);
-//         t = t + dist;
-//     }
-// 
-//     return shadow;

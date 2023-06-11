@@ -1,9 +1,6 @@
 use glam::{uvec2, Mat3, Vec3};
 
-use crate::{
-    render::{ShapeGPU, ShapesCPU, MAX_SHAPE_AMOUNT},
-    Context,
-};
+use crate::{render::MAX_SHAPE_AMOUNT, Context, Shape};
 
 /// Sets the internal camera position
 pub fn set_camera_pos(ctx: &mut Context, pos: Vec3) {
@@ -31,16 +28,17 @@ pub fn resize(ctx: &mut Context, width: u32, height: u32) {
     // TODO resize render texture
 }
 
-// /// Adds a sphere to the next frame
-// pub fn render_shape(ctx: &mut Context, shape: ShapeGPU) {
-//     debug_assert!(
-//         ctx.render.spheres.len() < MAX_SHAPE_AMOUNT as usize,
-//         "can not add more shapes than max: {}",
-//         MAX_SHAPE_AMOUNT
-//     );
-//     ctx.render.spheres.push(shape);
-// }
+pub fn render_shape(ctx: &mut Context, shape: Shape) {
+    debug_assert!(
+        ctx.render.shapes.len() < MAX_SHAPE_AMOUNT as usize,
+        "can not add more shapes than max: {}",
+        MAX_SHAPE_AMOUNT
+    );
+    ctx.render.shapes.push(shape);
+}
 
-pub fn render_raymarch(ctx: &mut Context, shapes: ShapesCPU) {
-    ctx.render.execute_raymarch(&ctx.time, shapes);
+pub fn render_shapes(ctx: &mut Context, shapes: Vec<Shape>) {
+    for shape in shapes {
+        render_shape(ctx, shape);
+    }
 }

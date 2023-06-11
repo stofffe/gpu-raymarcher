@@ -1,5 +1,6 @@
 use encase::{ShaderType, StorageBuffer, UniformBuffer};
-use glam::{uvec2, vec3, Mat3, Mat4, UVec2, Vec3};
+use glam::Mat3;
+use glam::{uvec2, vec3, UVec2, Vec3};
 use wgpu::{
     util::DeviceExt, Adapter, BindGroup, Buffer, ComputePipeline, Device, Extent3d, PresentMode,
     Queue, RenderPipeline, Surface, SurfaceConfiguration, TextureView,
@@ -37,12 +38,12 @@ pub struct RenderContext {
 
     pub(crate) globals: Globals,
     pub(crate) resolution: (u32, u32),
-    // pub(crate) spheres: Vec<ShapeGPU>,
+    pub(crate) shapes: Vec<Shape>,
     // pub(crate) shapes: Shapes,
 }
 
 #[derive(Debug, Clone)]
-pub enum ShapeCPU {
+pub enum Shape {
     Sphere {
         pos: Vec3,
         radius: f32,
@@ -56,34 +57,25 @@ pub enum ShapeCPU {
         normal: Vec3,
     },
     Union {
-        shape1: Box<ShapeCPU>,
-        shape2: Box<ShapeCPU>,
+        shape1: Box<Shape>,
+        shape2: Box<Shape>,
     },
     Intersection {
-        shape1: Box<ShapeCPU>,
-        shape2: Box<ShapeCPU>,
+        shape1: Box<Shape>,
+        shape2: Box<Shape>,
     },
     Subtraction {
-        shape1: Box<ShapeCPU>,
-        shape2: Box<ShapeCPU>,
+        shape1: Box<Shape>,
+        shape2: Box<Shape>,
     },
 }
 
-#[derive(Debug, Clone)]
-pub struct ShapesCPU(pub Vec<ShapeCPU>);
-
-impl ShapesCPU {
-    pub fn add(&mut self, shape: ShapeCPU) {
-        self.0.push(shape);
+pub fn shapes_to_gpu(shapes: &Vec<Shape>) -> ShapesGPU {
+    let mut gpu_shapes = ShapesGPU(Vec::new());
+    for shape in shapes.iter() {
+        gpu_shapes.add(shape);
     }
-    pub fn to_gpu(&self) -> ShapesGPU {
-        let mut shapes = ShapesGPU(Vec::new());
-        for shape in self.0.iter() {
-            shapes.add(shape);
-        }
-        // dbg!(&shapes);
-        shapes
-    }
+    gpu_shapes
 }
 
 #[derive(Default, Debug, Clone, ShaderType)]
@@ -98,43 +90,50 @@ pub struct ShapeGPU {
 pub struct ShapesGPU(Vec<ShapeGPU>);
 
 impl ShapesGPU {
-    pub fn add(&mut self, shape: &ShapeCPU) {
+    pub fn add(&mut self, shape: &Shape) {
         match shape {
-            ShapeCPU::Sphere { pos, radius } => self.0.push(ShapeGPU {
-                id: 0,
+            Shape::Union { shape1, shape2 } => {
+                self.0.push(ShapeGPU {
+                    id: 0,
+                    ..Default::default()
+                });
+                self.add(shape1);
+                self.add(shape2);
+            }
+            Shape::Intersection { shape1, shape2 } => {
+                self.0.push(ShapeGPU {
+                    id: 1,
+                    ..Default::default()
+                });
+                self.add(shape1);
+                self.add(shape2);
+            }
+            Shape::Subtraction { shape1, shape2 } => {
+                self.0.push(ShapeGPU {
+                    id: 2,
+                    ..Default::default()
+                });
+                self.add(shape1);
+                self.add(shape2);
+            }
+            Shape::Sphere { pos, radius } => self.0.push(ShapeGPU {
+                id: 6,
                 pos: *pos,
                 f1: *radius,
                 ..Default::default()
             }),
-            ShapeCPU::BoxExact { pos, b } => self.0.push(ShapeGPU {
+            Shape::BoxExact { pos, b } => self.0.push(ShapeGPU {
                 pos: *pos,
-                id: 1,
+                id: 7,
                 v1: *b,
                 ..Default::default()
             }),
-            ShapeCPU::Plane { pos, normal } => self.0.push(ShapeGPU {
+            Shape::Plane { pos, normal } => self.0.push(ShapeGPU {
                 pos: *pos,
-                id: 2,
+                id: 8,
                 v1: *normal,
                 ..Default::default()
             }),
-            ShapeCPU::Union { shape1, shape2 } => {
-                self.0.push(ShapeGPU {
-                    id: 3,
-                    ..Default::default()
-                });
-                self.add(shape1);
-                self.add(shape2);
-            }
-            ShapeCPU::Intersection { shape1, shape2 } => {
-                self.0.push(ShapeGPU {
-                    id: 4,
-                    ..Default::default()
-                });
-                self.add(shape1);
-                self.add(shape2);
-            }
-            ShapeCPU::Subtraction { shape1, shape2 } => todo!(),
         };
     }
 }
@@ -208,6 +207,8 @@ impl RenderContext {
 
         let window_size = window.inner_size();
 
+        let shapes = Vec::with_capacity(MAX_SHAPE_AMOUNT as usize);
+
         Self {
             window,
             surface,
@@ -232,6 +233,7 @@ impl RenderContext {
 
             globals,
             resolution: (WIDTH, HEIGHT),
+            shapes,
         }
     }
 
@@ -249,10 +251,11 @@ impl RenderContext {
         }
     }
 
-    pub fn execute_raymarch(&mut self, time_ctx: &TimeContext, shapes: ShapesCPU) {
-        self.update_global_uniforms(time_ctx, shapes.0.len() as u32);
-        self.update_input_buffer(shapes.to_gpu());
+    fn execute_raymarch(&mut self, time_ctx: &TimeContext) {
+        self.update_global_uniforms(time_ctx, self.shapes.len() as u32);
+        self.update_input_buffer(shapes_to_gpu(&self.shapes));
         self.execute_compute();
+        self.shapes.clear();
     }
 
     fn update_global_uniforms(&mut self, time_ctx: &TimeContext, len: u32) {
@@ -299,11 +302,9 @@ impl RenderContext {
 
     pub(crate) fn render(&mut self, time_ctx: &TimeContext) -> Result<(), wgpu::SurfaceError> {
         // Execute raymarching compute shader
-        // self.update_global_uniforms(time_ctx, );
-        // self.update_input_buffer();
-        // self.execute_compute();
+        self.execute_raymarch(time_ctx);
 
-        // Render texture
+        // Render texture;
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -448,12 +449,6 @@ fn create_compute_pipeline(
         ],
     });
 
-    // Sphere buffer
-    // let spheres = Vec::<Sphere>::new();
-    // let mut byte_buffer = Vec::new();
-    // let mut buffer = StorageBuffer::new(&mut byte_buffer);
-    // buffer.write(&spheres).unwrap();
-
     let buffer_size = u64::from(ShapeGPU::min_size()) * MAX_SHAPE_AMOUNT;
     let input_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("shape buffer"),
@@ -463,14 +458,6 @@ fn create_compute_pipeline(
             | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    // let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //     label: Some("storage buffer"),
-    //     contents: &byte_buffer,
-    //     usage: wgpu::BufferUsages::STORAGE
-    //         | wgpu::BufferUsages::COPY_DST
-    //         | wgpu::BufferUsages::COPY_SRC,
-    //     // contents: bytemuck::cast_slice(spheres),
-    // });
 
     // Globals unfiform
     let mut buffer = UniformBuffer::new(Vec::new());
@@ -676,60 +663,3 @@ fn create_vertex_index_buffers(device: &Device) -> (Buffer, Buffer, u32) {
 
     (vertex_buffer, index_buffer, num_indices)
 }
-
-// /// Vertex representation
-// #[repr(C)]
-// #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-// struct Vertex {
-//     position: [f32; 3],
-// }
-//
-// impl Vertex {
-//     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-//         wgpu::VertexBufferLayout {
-//             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-//             step_mode: wgpu::VertexStepMode::Vertex,
-//             attributes: &[wgpu::VertexAttribute {
-//                 offset: 0,
-//                 shader_location: 0,
-//                 format: wgpu::VertexFormat::Float32x3,
-//             }],
-//         }
-//     }
-// }
-
-// TODO normalize here or let user?
-// impl ShapeGPU {
-//     pub fn sphere(pos: Vec3, radius: f32) -> Self {
-//         Self {
-//             pos,
-//             id: 0,
-//             f1: radius,
-//             ..Default::default()
-//         }
-//     }
-//
-//     pub fn box_exact(pos: Vec3, b: Vec3) -> Self {
-//         Self {
-//             pos,
-//             id: 1,
-//             v1: b.normalize(),
-//             ..Default::default()
-//         }
-//     }
-//
-//     pub fn plane(pos: Vec3, normal: Vec3) -> Self {
-//         Self {
-//             pos,
-//             id: 2,
-//             v1: normal.normalize(),
-//             ..Default::default()
-//         }
-//     }
-// }
-
-// #[derive(ShaderType)]
-// pub struct Sphere {
-//     pub pos: Vec3,
-//     pub radius: f32,
-// }
